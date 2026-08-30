@@ -1,0 +1,172 @@
+package bootstrap
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/dh-kam/kakao-bot/internal/config"
+	"github.com/dh-kam/kakao-bot/internal/usecase/auth"
+	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/refutils/flagsbinder"
+	"github.com/spf13/cobra"
+)
+
+func newAuthCommand(ctx context.Context) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "auth",
+		Short:         "Manage KakaoTalk OAuth authentication and tokens",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	cmd.AddCommand(
+		newAuthLoginCommand(ctx),
+		newAuthStatusCommand(ctx),
+		newAuthRefreshCommand(ctx),
+	)
+
+	return cmd
+}
+
+func newAuthLoginCommand(ctx context.Context) *cobra.Command {
+	cfg := config.Load()
+
+	opts := struct {
+		ClientID     string   `flag:"client-id" usage:"Kakao REST API Key"`
+		ClientSecret string   `flag:"client-secret" usage:"Kakao Client Secret"`
+		RedirectURI  string   `flag:"redirect-uri" usage:"Kakao OAuth Redirect URI"`
+		TokenPath    string   `flag:"token-path" usage:"Path to save token JSON file"`
+		Code         string   `flag:"code" usage:"Kakao authorization code"`
+		Scopes       []string `flag:"scopes" usage:"OAuth scopes"`
+		Manual       bool     `flag:"manual" usage:"Force manual code input without starting local callback server"`
+	}{}
+
+	binder := flagsbinder.NewViperCobraFlagsBinder().
+		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
+		String("client-secret", cfg.ClientSecret, "Kakao Client Secret (optional)").
+		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
+		StringP("token-path", "t", cfg.TokenPath, "Path to save token JSON file").
+		String("code", "", "Kakao authorization code").
+		StringSlice("scopes", []string{kakao.ScopeTalkMessage, kakao.ScopeFriends, kakao.ScopeProfile}, "OAuth scopes").
+		Bool("manual", false, "Force manual code input without starting local callback server")
+
+	cmd := &cobra.Command{
+		Use:           "login",
+		Short:         "Authenticate with Kakao via OAuth 2.0 and save tokens",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
+				_ = cmd.Usage()
+				return err
+			}
+			if opts.ClientID == "" {
+				_ = cmd.Usage()
+				return fmt.Errorf("--client-id is required (or set KAKAO_REST_API_KEY environment variable)")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return auth.NewLoginUseCase().Execute(cmd.Context(), auth.LoginRequest{
+				ClientID:     opts.ClientID,
+				ClientSecret: opts.ClientSecret,
+				RedirectURI:  opts.RedirectURI,
+				TokenPath:    opts.TokenPath,
+				Code:         opts.Code,
+				Scopes:       opts.Scopes,
+				Manual:       opts.Manual,
+				Out:          cmd.OutOrStdout(),
+			})
+		},
+	}
+
+	binder.SetTo(cmd.Flags())
+	return cmd
+}
+
+func newAuthStatusCommand(ctx context.Context) *cobra.Command {
+	cfg := config.Load()
+
+	opts := struct {
+		ClientID     string `flag:"client-id" usage:"Kakao REST API Key"`
+		ClientSecret string `flag:"client-secret" usage:"Kakao Client Secret"`
+		RedirectURI  string `flag:"redirect-uri" usage:"Kakao OAuth Redirect URI"`
+		TokenPath    string `flag:"token-path" usage:"Path to token JSON file"`
+	}{}
+
+	binder := flagsbinder.NewViperCobraFlagsBinder().
+		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
+		String("client-secret", cfg.ClientSecret, "Kakao Client Secret (optional)").
+		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
+		StringP("token-path", "t", cfg.TokenPath, "Path to token JSON file")
+
+	cmd := &cobra.Command{
+		Use:           "status",
+		Short:         "Check KakaoTalk authentication status and current user profile",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
+				_ = cmd.Usage()
+				return err
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return auth.NewStatusUseCase().Execute(cmd.Context(), auth.StatusRequest{
+				ClientID:     opts.ClientID,
+				ClientSecret: opts.ClientSecret,
+				RedirectURI:  opts.RedirectURI,
+				TokenPath:    opts.TokenPath,
+				Out:          cmd.OutOrStdout(),
+			})
+		},
+	}
+
+	binder.SetTo(cmd.Flags())
+	return cmd
+}
+
+func newAuthRefreshCommand(ctx context.Context) *cobra.Command {
+	cfg := config.Load()
+
+	opts := struct {
+		ClientID     string `flag:"client-id" usage:"Kakao REST API Key"`
+		ClientSecret string `flag:"client-secret" usage:"Kakao Client Secret"`
+		TokenPath    string `flag:"token-path" usage:"Path to token JSON file"`
+	}{}
+
+	binder := flagsbinder.NewViperCobraFlagsBinder().
+		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
+		String("client-secret", cfg.ClientSecret, "Kakao Client Secret (optional)").
+		StringP("token-path", "t", cfg.TokenPath, "Path to token JSON file")
+
+	cmd := &cobra.Command{
+		Use:           "refresh",
+		Short:         "Force refresh KakaoTalk access token",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
+				_ = cmd.Usage()
+				return err
+			}
+			if opts.ClientID == "" {
+				_ = cmd.Usage()
+				return fmt.Errorf("--client-id is required (or set KAKAO_REST_API_KEY environment variable)")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return auth.NewRefreshUseCase().Execute(cmd.Context(), auth.RefreshRequest{
+				ClientID:     opts.ClientID,
+				ClientSecret: opts.ClientSecret,
+				TokenPath:    opts.TokenPath,
+				Out:          cmd.OutOrStdout(),
+			})
+		},
+	}
+
+	binder.SetTo(cmd.Flags())
+	return cmd
+}
