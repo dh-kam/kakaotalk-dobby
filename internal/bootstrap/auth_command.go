@@ -21,6 +21,7 @@ func newAuthCommand(ctx context.Context) *cobra.Command {
 
 	cmd.AddCommand(
 		newAuthLoginCommand(ctx),
+		newAuthCheckCommand(ctx),
 		newAuthStatusCommand(ctx),
 		newAuthRefreshCommand(ctx),
 	)
@@ -163,6 +164,47 @@ func newAuthRefreshCommand(ctx context.Context) *cobra.Command {
 				ClientSecret: opts.ClientSecret,
 				TokenPath:    opts.TokenPath,
 				Out:          cmd.OutOrStdout(),
+			})
+		},
+	}
+
+	binder.SetTo(cmd.Flags())
+	return cmd
+}
+
+func newAuthCheckCommand(ctx context.Context) *cobra.Command {
+	cfg := config.Load()
+
+	opts := struct {
+		ClientID    string `flag:"client-id" usage:"Kakao REST API Key"`
+		RedirectURI string `flag:"redirect-uri" usage:"Kakao OAuth Redirect URI"`
+	}{}
+
+	binder := flagsbinder.NewViperCobraFlagsBinder().
+		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
+		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI")
+
+	cmd := &cobra.Command{
+		Use:           "check",
+		Short:         "Validate Kakao REST API Key and verify Developer settings",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
+				_ = cmd.Usage()
+				return err
+			}
+			if opts.ClientID == "" {
+				_ = cmd.Usage()
+				return fmt.Errorf("--client-id is required (or set KAKAO_REST_API_KEY in .env)")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return auth.NewCheckUseCase().Execute(cmd.Context(), auth.CheckRequest{
+				ClientID:    opts.ClientID,
+				RedirectURI: opts.RedirectURI,
+				Out:         cmd.OutOrStdout(),
 			})
 		},
 	}

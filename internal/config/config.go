@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bufio"
 	"os"
+	"strings"
 
 	"github.com/dh-kam/kakao-bot/pkg/kakao"
 )
@@ -14,8 +16,10 @@ type AppConfig struct {
 	TokenPath    string
 }
 
-// Load loads configuration from environment variables with sensible defaults.
+// Load loads configuration from .env file and environment variables with sensible defaults.
 func Load() *AppConfig {
+	loadDotEnv(".env")
+
 	cfg := &AppConfig{
 		ClientID:     os.Getenv("KAKAO_REST_API_KEY"),
 		ClientSecret: os.Getenv("KAKAO_CLIENT_SECRET"),
@@ -31,6 +35,32 @@ func Load() *AppConfig {
 	}
 
 	return cfg
+}
+
+func loadDotEnv(filename string) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			val = strings.Trim(val, `"'`)
+			if os.Getenv(key) == "" {
+				_ = os.Setenv(key, val)
+			}
+		}
+	}
 }
 
 // BuildKakaoClient constructs a kakao.Client from configuration.
