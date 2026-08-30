@@ -48,9 +48,6 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 	if req.RedirectURI == "" {
 		req.RedirectURI = "http://localhost:8080/callback"
 	}
-	if len(req.Scopes) == 0 {
-		req.Scopes = []string{kakao.ScopeTalkMessage, kakao.ScopeFriends, kakao.ScopeProfile}
-	}
 
 	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
 		ClientID:     req.ClientID,

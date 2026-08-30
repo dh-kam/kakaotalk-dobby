@@ -6,7 +6,6 @@ import (
 
 	"github.com/dh-kam/kakao-bot/internal/config"
 	"github.com/dh-kam/kakao-bot/internal/usecase/auth"
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
 	"github.com/dh-kam/refutils/flagsbinder"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +47,7 @@ func newAuthLoginCommand(ctx context.Context) *cobra.Command {
 		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
 		StringP("token-path", "t", cfg.TokenPath, "Path to save token JSON file").
 		String("code", "", "Kakao authorization code").
-		StringSlice("scopes", []string{kakao.ScopeTalkMessage, kakao.ScopeFriends, kakao.ScopeProfile}, "OAuth scopes").
+		StringSlice("scopes", nil, "OAuth scopes (optional)").
 		Bool("manual", false, "Force manual code input without starting local callback server")
 
 	cmd := &cobra.Command{
