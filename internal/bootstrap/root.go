@@ -22,6 +22,7 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 		newSendCommand(ctx),
 		newFriendsCommand(ctx),
 		newServeCommand(ctx),
+		newSkillCommand(ctx),
 	)
 
 	return rootCmd
