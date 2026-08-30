@@ -63,18 +63,14 @@ func loadDotEnv(filename string) {
 	}
 }
 
-// BuildKakaoClient constructs a kakao.Client from configuration.
-func (c *AppConfig) BuildKakaoClient() *kakao.Client {
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
-		ClientID:     c.ClientID,
-		ClientSecret: c.ClientSecret,
-		RedirectURI:  c.RedirectURI,
-	})
-
+// BuildKakaoClient constructs a kakao.Client interface from configuration.
+func (c *AppConfig) BuildKakaoClient() kakao.Client {
 	tokenStore := kakao.NewFileTokenStore(c.TokenPath)
 
 	return kakao.NewClient(kakao.ClientConfig{
-		OAuthClient: oauthClient,
-		TokenStore:  tokenStore,
+		ClientID:     c.ClientID,
+		ClientSecret: c.ClientSecret,
+		RedirectURI:  c.RedirectURI,
+		TokenStore:   tokenStore,
 	})
 }

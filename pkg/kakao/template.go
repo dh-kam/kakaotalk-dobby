@@ -16,7 +16,7 @@ type ButtonObject struct {
 	Link  LinkObject `json:"link"`
 }
 
-// ContentObject represents media content in feed or list templates.
+// ContentObject represents media content in feed, list, or location templates.
 type ContentObject struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description,omitempty"`
@@ -24,6 +24,44 @@ type ContentObject struct {
 	ImageWidth  int        `json:"image_width,omitempty"`
 	ImageHeight int        `json:"image_height,omitempty"`
 	Link        LinkObject `json:"link"`
+}
+
+// SocialObject contains social reaction counts.
+type SocialObject struct {
+	LikeCount        int `json:"like_count,omitempty"`
+	CommentCount     int `json:"comment_count,omitempty"`
+	SharedCount      int `json:"shared_count,omitempty"`
+	ViewCount        int `json:"view_count,omitempty"`
+	SubscriberCount  int `json:"subscriber_count,omitempty"`
+}
+
+// CommerceObject contains price and product discount details.
+type CommerceObject struct {
+	RegularPrice       int    `json:"regular_price"`
+	DiscountPrice      int    `json:"discount_price,omitempty"`
+	DiscountRate       int    `json:"discount_rate,omitempty"`
+	FixedDiscountPrice int    `json:"fixed_discount_price,omitempty"`
+	ProductName        string `json:"product_name,omitempty"`
+	CurrencyUnit       string `json:"currency_unit,omitempty"`
+	CurrencyUnitPos    int    `json:"currency_unit_position,omitempty"`
+}
+
+// ItemInfo represents an item in an ItemContentObject.
+type ItemInfo struct {
+	Item   string `json:"item"`
+	ItemOp string `json:"item_op"`
+}
+
+// ItemContentObject represents supplementary itemized content in feed or list.
+type ItemContentObject struct {
+	ProfileText         string     `json:"profile_text,omitempty"`
+	ProfileImageURL     string     `json:"profile_image_url,omitempty"`
+	TitleImageURL       string     `json:"title_image_url,omitempty"`
+	TitleImageText      string     `json:"title_image_text,omitempty"`
+	TitleImageCategory  string     `json:"title_image_category,omitempty"`
+	Items               []ItemInfo `json:"items,omitempty"`
+	Sum                 string     `json:"sum,omitempty"`
+	SumOp               string     `json:"sum_op,omitempty"`
 }
 
 // TextTemplate represents the Kakao text message template.
@@ -53,9 +91,11 @@ func NewTextTemplate(text string, webURL string, buttonTitle string) *TextTempla
 
 // FeedTemplate represents the Kakao feed message template.
 type FeedTemplate struct {
-	ObjectType string         `json:"object_type"`
-	Content    ContentObject  `json:"content"`
-	Buttons    []ButtonObject `json:"buttons,omitempty"`
+	ObjectType  string             `json:"object_type"`
+	Content     ContentObject      `json:"content"`
+	ItemContent *ItemContentObject `json:"item_content,omitempty"`
+	Social      *SocialObject      `json:"social,omitempty"`
+	Buttons     []ButtonObject     `json:"buttons,omitempty"`
 }
 
 // NewFeedTemplate creates a feed template.
@@ -93,6 +133,23 @@ type ListTemplate struct {
 	HeaderLink  LinkObject      `json:"header_link"`
 	Contents    []ContentObject `json:"contents"`
 	Buttons     []ButtonObject  `json:"buttons,omitempty"`
+}
+
+// CommerceTemplate represents the Kakao commerce message template.
+type CommerceTemplate struct {
+	ObjectType string         `json:"object_type"`
+	Content    ContentObject  `json:"content"`
+	Commerce   CommerceObject `json:"commerce"`
+	Buttons    []ButtonObject `json:"buttons,omitempty"`
+}
+
+// LocationTemplate represents the Kakao location map message template.
+type LocationTemplate struct {
+	ObjectType   string         `json:"object_type"`
+	Content      ContentObject  `json:"content"`
+	Address      string         `json:"address"`
+	AddressTitle string         `json:"address_title,omitempty"`
+	Buttons      []ButtonObject `json:"buttons,omitempty"`
 }
 
 // ToJSON marshals any template into a JSON string.

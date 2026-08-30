@@ -25,5 +25,8 @@ func TestRootCommand(t *testing.T) {
 	assert.Contains(t, buf.String(), "auth")
 	assert.Contains(t, buf.String(), "send")
 	assert.Contains(t, buf.String(), "friends")
+	assert.Contains(t, buf.String(), "user")
+	assert.Contains(t, buf.String(), "storage")
 	assert.Contains(t, buf.String(), "serve")
+	assert.Contains(t, buf.String(), "skill")
 }

@@ -11,7 +11,7 @@ import (
 func NewRootCommand(ctx context.Context) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:           "kakaobot",
-		Short:         "KakaoTalk CLI bot for sending messages and notifications",
+		Short:         "KakaoTalk CLI bot for sending messages, managing users, and handling chatbot skills",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       buildinfo.Version,
@@ -21,6 +21,8 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 		newAuthCommand(ctx),
 		newSendCommand(ctx),
 		newFriendsCommand(ctx),
+		newUserCommand(ctx),
+		newStorageCommand(ctx),
 		newServeCommand(ctx),
 		newSkillCommand(ctx),
 	)

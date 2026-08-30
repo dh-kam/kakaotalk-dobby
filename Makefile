@@ -68,9 +68,15 @@ define all_for_arch_variant
 $(foreach os,$(OS_LIST),$(call artifact,$(os),$(1),$(2)))
 endef
 
-.PHONY: all clean $(OS_LIST) $(ARCH_LIST) $(BUILD_VARIANTS) $(OS_ARCH_PAIRS) $(OS_VARIANT_PAIRS) $(ARCH_VARIANT_PAIRS) $(FULL_SELECTOR_KEYS)
+.PHONY: all test lint clean $(OS_LIST) $(ARCH_LIST) $(BUILD_VARIANTS) $(OS_ARCH_PAIRS) $(OS_VARIANT_PAIRS) $(ARCH_VARIANT_PAIRS) $(FULL_SELECTOR_KEYS)
 
 all: $(FULL_TARGETS)
+
+test:
+	$(GO) test -v -race ./...
+
+lint:
+	$(GO) vet ./...
 
 clean:
 	@rm -rf $(OUTPUT_DIR)

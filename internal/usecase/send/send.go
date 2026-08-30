@@ -48,7 +48,6 @@ func (uc *SendMeUseCase) Execute(ctx context.Context, req SendMeRequest) error {
 
 	client := buildClient(req.ClientID, req.ClientSecret, req.RedirectURI, req.TokenPath)
 
-	// Check if custom template ID is provided
 	if req.TemplateID > 0 {
 		var args map[string]string
 		if req.TemplateArgs != "" {
@@ -56,27 +55,24 @@ func (uc *SendMeUseCase) Execute(ctx context.Context, req SendMeRequest) error {
 				return fmt.Errorf("invalid template args JSON: %w", err)
 			}
 		}
-		if err := client.SendMeCustom(ctx, req.TemplateID, args); err != nil {
+		if err := client.Memo().SendCustom(ctx, req.TemplateID, args); err != nil {
 			return fmt.Errorf("send custom message: %w", err)
 		}
 		fmt.Fprintf(out, "Custom template message (ID: %d) sent successfully to yourself.\n", req.TemplateID)
 		return nil
 	}
 
-	// Check if feed template fields are provided
 	if req.Title != "" || req.ImageURL != "" {
 		feed := kakao.NewFeedTemplate(req.Title, req.Description, req.ImageURL, req.WebURL, req.ButtonTitle)
-		if err := client.SendMeFeed(ctx, feed); err != nil {
+		if err := client.Memo().SendFeed(ctx, *feed); err != nil {
 			return fmt.Errorf("send feed message: %w", err)
 		}
 		fmt.Fprintln(out, "Feed message sent successfully to yourself.")
 		return nil
 	}
 
-	// Otherwise, handle text message
 	text := req.Text
 	if text == "" || text == "-" {
-		// Read from stdin if text is empty or "-"
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 || text == "-" {
 			bytes, err := io.ReadAll(in)
@@ -91,7 +87,11 @@ func (uc *SendMeUseCase) Execute(ctx context.Context, req SendMeRequest) error {
 		return fmt.Errorf("message text cannot be empty (pass as argument, --text flag, or pipe via stdin)")
 	}
 
-	if err := client.SendMeText(ctx, text, req.WebURL, req.ButtonTitle); err != nil {
+	if err := client.Memo().SendText(ctx, kakao.TextMessageRequest{
+		Text:        text,
+		WebURL:      req.WebURL,
+		ButtonTitle: req.ButtonTitle,
+	}); err != nil {
 		return fmt.Errorf("send text message: %w", err)
 	}
 
@@ -148,7 +148,7 @@ func (uc *SendFriendUseCase) Execute(ctx context.Context, req SendFriendRequest)
 				return fmt.Errorf("invalid template args JSON: %w", err)
 			}
 		}
-		res, err := client.SendFriendsCustom(ctx, req.ReceiverUUIDs, req.TemplateID, args)
+		res, err := client.Friends().SendCustom(ctx, req.ReceiverUUIDs, req.TemplateID, args)
 		if err != nil {
 			return fmt.Errorf("send custom message to friends: %w", err)
 		}
@@ -158,7 +158,7 @@ func (uc *SendFriendUseCase) Execute(ctx context.Context, req SendFriendRequest)
 
 	if req.Title != "" || req.ImageURL != "" {
 		feed := kakao.NewFeedTemplate(req.Title, req.Description, req.ImageURL, req.WebURL, req.ButtonTitle)
-		res, err := client.SendFriendsTemplate(ctx, req.ReceiverUUIDs, feed)
+		res, err := client.Friends().SendFeed(ctx, req.ReceiverUUIDs, *feed)
 		if err != nil {
 			return fmt.Errorf("send feed message to friends: %w", err)
 		}
@@ -182,7 +182,11 @@ func (uc *SendFriendUseCase) Execute(ctx context.Context, req SendFriendRequest)
 		return fmt.Errorf("message text cannot be empty")
 	}
 
-	res, err := client.SendFriendsText(ctx, req.ReceiverUUIDs, text, req.WebURL, req.ButtonTitle)
+	res, err := client.Friends().SendText(ctx, req.ReceiverUUIDs, kakao.TextMessageRequest{
+		Text:        text,
+		WebURL:      req.WebURL,
+		ButtonTitle: req.ButtonTitle,
+	})
 	if err != nil {
 		return fmt.Errorf("send text message to friends: %w", err)
 	}
@@ -204,15 +208,12 @@ func printFriendResult(out io.Writer, res *kakao.MessageResult) {
 	}
 }
 
-func buildClient(clientID, clientSecret, redirectURI, tokenPath string) *kakao.Client {
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
+func buildClient(clientID, clientSecret, redirectURI, tokenPath string) kakao.Client {
+	tokenStore := kakao.NewFileTokenStore(tokenPath)
+	return kakao.NewClient(kakao.ClientConfig{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURI:  redirectURI,
-	})
-	tokenStore := kakao.NewFileTokenStore(tokenPath)
-	return kakao.NewClient(kakao.ClientConfig{
-		OAuthClient: oauthClient,
-		TokenStore:  tokenStore,
+		TokenStore:   tokenStore,
 	})
 }

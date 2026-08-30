@@ -34,18 +34,18 @@ func (uc *ListFriendsUseCase) Execute(ctx context.Context, req ListFriendsReques
 		out = os.Stdout
 	}
 
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
+	tokenStore := kakao.NewFileTokenStore(req.TokenPath)
+	client := kakao.NewClient(kakao.ClientConfig{
 		ClientID:     req.ClientID,
 		ClientSecret: req.ClientSecret,
 		RedirectURI:  req.RedirectURI,
-	})
-	tokenStore := kakao.NewFileTokenStore(req.TokenPath)
-	client := kakao.NewClient(kakao.ClientConfig{
-		OAuthClient: oauthClient,
-		TokenStore:  tokenStore,
+		TokenStore:   tokenStore,
 	})
 
-	friendsResp, err := client.GetFriends(ctx, req.Offset, req.Limit)
+	friendsResp, err := client.Friends().GetFriends(ctx, kakao.FriendsQueryOptions{
+		Offset: req.Offset,
+		Limit:  req.Limit,
+	})
 	if err != nil {
 		return fmt.Errorf("get friends: %w", err)
 	}

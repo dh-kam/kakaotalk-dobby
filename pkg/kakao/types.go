@@ -13,7 +13,7 @@ type TokenInfo struct {
 	CreatedAt             time.Time `json:"created_at"`
 }
 
-// IsExpired checks if the access token has expired (or within 60s of expiring).
+// IsExpired checks if the access token has expired (with a 60s buffer).
 func (t *TokenInfo) IsExpired() bool {
 	if t == nil || t.AccessToken == "" {
 		return true
@@ -35,10 +35,19 @@ func (t *TokenInfo) IsRefreshTokenExpired() bool {
 	return time.Now().After(t.CreatedAt.Add(time.Duration(t.RefreshTokenExpiresIn) * time.Second))
 }
 
-// UserProfile represents Kakao user profile from /v2/user/me.
+// AccessTokenInfo contains token metadata returned from /v1/user/access_token_info.
+type AccessTokenInfo struct {
+	ID        int64 `json:"id"`
+	ExpiresIn int64 `json:"expires_in"`
+	AppID     int64 `json:"app_id"`
+}
+
+// UserProfile represents user profile from /v2/user/me.
 type UserProfile struct {
 	ID           int64         `json:"id"`
 	KakaoAccount *KakaoAccount `json:"kakao_account,omitempty"`
+	ConnectedAt  string        `json:"connected_at,omitempty"`
+	SynchedAt    string        `json:"synched_at,omitempty"`
 }
 
 // KakaoAccount represents user account details.
@@ -52,6 +61,14 @@ type KakaoAccount struct {
 	IsEmailValid                  bool          `json:"is_email_valid"`
 	IsEmailVerified               bool          `json:"is_email_verified"`
 	Email                         string        `json:"email,omitempty"`
+	PhoneNumberNeedsAgreement     bool          `json:"phone_number_needs_agreement"`
+	PhoneNumber                   string        `json:"phone_number,omitempty"`
+	BirthyearNeedsAgreement       bool          `json:"birthyear_needs_agreement"`
+	Birthyear                     string        `json:"birthyear,omitempty"`
+	BirthdayNeedsAgreement        bool          `json:"birthday_needs_agreement"`
+	Birthday                      string        `json:"birthday,omitempty"`
+	GenderNeedsAgreement          bool          `json:"gender_needs_agreement"`
+	Gender                        string        `json:"gender,omitempty"`
 }
 
 // KakaoProfile represents user profile details.
@@ -61,6 +78,28 @@ type KakaoProfile struct {
 	ProfileImageURL      string `json:"profile_image_url,omitempty"`
 	IsDefaultImage       bool   `json:"is_default_image"`
 	IsDefaultNickname    bool   `json:"is_default_nickname"`
+}
+
+// ShippingAddressesResponse represents response from /v1/user/shipping_address.
+type ShippingAddressesResponse struct {
+	UserID            int64             `json:"user_id"`
+	ShippingAddresses []ShippingAddress `json:"shipping_addresses"`
+}
+
+// ShippingAddress represents a single user shipping address.
+type ShippingAddress struct {
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	IsDefault      bool   `json:"is_default"`
+	UpdatedAt      int64  `json:"updated_at"`
+	Type           string `json:"type"`
+	BaseAddress    string `json:"base_address"`
+	DetailAddress  string `json:"detail_address"`
+	ReceiverName   string `json:"receiver_name"`
+	ReceiverPhone1 string `json:"receiver_phone_number1"`
+	ReceiverPhone2 string `json:"receiver_phone_number2"`
+	ZoneNumber     string `json:"zone_number"`
+	ZipCode        string `json:"zip_code"`
 }
 
 // Friend represents a KakaoTalk friend.
@@ -81,6 +120,14 @@ type FriendsResponse struct {
 	AfterURL   string   `json:"after_url,omitempty"`
 }
 
+// FriendsQueryOptions holds pagination and sorting params for /v1/api/talk/friends.
+type FriendsQueryOptions struct {
+	Offset      int    `json:"offset,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+	Order       string `json:"order,omitempty"`        // "asc" or "desc"
+	FriendOrder string `json:"friend_order,omitempty"` // "favorite" or "nickname"
+}
+
 // MessageResult represents response for sending messages to friends.
 type MessageResult struct {
 	SuccessfulReceiverUUIDs []string      `json:"successful_receiver_uuids"`
@@ -94,23 +141,31 @@ type FailureInfo struct {
 	ReceiverUUIDs []string `json:"receiver_uuids"`
 }
 
-// APIError represents an error response from Kakao API.
-type APIError struct {
-	Msg              string `json:"msg,omitempty"`
-	Code             int    `json:"code,omitempty"`
-	ErrorStr         string `json:"error,omitempty"`
-	ErrorDescription string `json:"error_description,omitempty"`
+// UploadedImageInfo represents result of image upload from /v2/api/talk/message/image/upload.
+type UploadedImageInfo struct {
+	Infos ImageInfos `json:"infos"`
 }
 
-func (e *APIError) Error() string {
-	if e.ErrorDescription != "" {
-		return e.ErrorDescription
-	}
-	if e.Msg != "" {
-		return e.Msg
-	}
-	if e.ErrorStr != "" {
-		return e.ErrorStr
-	}
-	return "unknown kakao api error"
+// ImageInfos contains original and thumbnail URLs.
+type ImageInfos struct {
+	Original  ImageDetail `json:"original"`
+	Thumbnail ImageDetail `json:"thumbnail,omitempty"`
+}
+
+// ImageDetail contains image properties.
+type ImageDetail struct {
+	URL      string `json:"url"`
+	Length   int64  `json:"length"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	Format   string `json:"content_type"`
+	Expires  int64  `json:"expires_at"`
+}
+
+// TextMessageRequest is a helper request struct for sending simple text messages.
+type TextMessageRequest struct {
+	Text        string
+	WebURL      string
+	MobileURL   string
+	ButtonTitle string
 }

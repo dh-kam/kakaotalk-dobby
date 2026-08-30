@@ -10,14 +10,7 @@ import (
 	"sync"
 )
 
-// ErrTokenNotFound indicates that no stored token was found.
 var ErrTokenNotFound = errors.New("kakao token not found")
-
-// TokenStore defines persistence operations for OAuth tokens.
-type TokenStore interface {
-	Load(ctx context.Context) (*TokenInfo, error)
-	Save(ctx context.Context, token *TokenInfo) error
-}
 
 // FileTokenStore stores tokens in a local JSON file.
 type FileTokenStore struct {
@@ -34,17 +27,14 @@ func DefaultTokenPath() string {
 	return filepath.Join(home, ".config", "kakao-bot", "tokens.json")
 }
 
-// NewFileTokenStore creates a new FileTokenStore with the given file path.
+// NewFileTokenStore creates a new FileTokenStore.
 func NewFileTokenStore(path string) *FileTokenStore {
 	if path == "" {
 		path = DefaultTokenPath()
 	}
-	return &FileTokenStore{
-		path: path,
-	}
+	return &FileTokenStore{path: path}
 }
 
-// Load reads and parses TokenInfo from the token file.
 func (s *FileTokenStore) Load(ctx context.Context) (*TokenInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -65,7 +55,6 @@ func (s *FileTokenStore) Load(ctx context.Context) (*TokenInfo, error) {
 	return &token, nil
 }
 
-// Save writes TokenInfo to the token file with secure permissions.
 func (s *FileTokenStore) Save(ctx context.Context, token *TokenInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -87,7 +76,17 @@ func (s *FileTokenStore) Save(ctx context.Context, token *TokenInfo) error {
 	return nil
 }
 
-// MemoryTokenStore stores tokens in-memory (useful for tests).
+func (s *FileTokenStore) Clear(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove token file %q: %w", s.path, err)
+	}
+	return nil
+}
+
+// MemoryTokenStore stores tokens in-memory.
 type MemoryTokenStore struct {
 	token *TokenInfo
 	mu    sync.RWMutex
@@ -117,5 +116,12 @@ func (s *MemoryTokenStore) Save(ctx context.Context, token *TokenInfo) error {
 	}
 	cpy := *token
 	s.token = &cpy
+	return nil
+}
+
+func (s *MemoryTokenStore) Clear(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.token = nil
 	return nil
 }

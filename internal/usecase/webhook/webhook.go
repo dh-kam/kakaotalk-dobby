@@ -47,15 +47,12 @@ func (uc *ServeUseCase) Execute(ctx context.Context, req ServeRequest) error {
 		out = os.Stdout
 	}
 
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
+	tokenStore := kakao.NewFileTokenStore(req.TokenPath)
+	client := kakao.NewClient(kakao.ClientConfig{
 		ClientID:     req.ClientID,
 		ClientSecret: req.ClientSecret,
 		RedirectURI:  req.RedirectURI,
-	})
-	tokenStore := kakao.NewFileTokenStore(req.TokenPath)
-	client := kakao.NewClient(kakao.ClientConfig{
-		OAuthClient: oauthClient,
-		TokenStore:  tokenStore,
+		TokenStore:   tokenStore,
 	})
 
 	mux := http.NewServeMux()
@@ -88,7 +85,6 @@ func (uc *ServeUseCase) Execute(ctx context.Context, req ServeRequest) error {
 
 		var payload WebhookPayload
 		if err := json.Unmarshal(body, &payload); err != nil {
-			// If not JSON, use body text directly
 			payload.Text = strings.TrimSpace(string(body))
 		}
 
@@ -102,11 +98,17 @@ func (uc *ServeUseCase) Execute(ctx context.Context, req ServeRequest) error {
 			return
 		}
 
+		msgReq := kakao.TextMessageRequest{
+			Text:        msgText,
+			WebURL:      payload.URL,
+			ButtonTitle: payload.ButtonTitle,
+		}
+
 		var sendErr error
 		if len(payload.ReceiverUUIDs) > 0 {
-			_, sendErr = client.SendFriendsText(r.Context(), payload.ReceiverUUIDs, msgText, payload.URL, payload.ButtonTitle)
+			_, sendErr = client.Friends().SendText(r.Context(), payload.ReceiverUUIDs, msgReq)
 		} else {
-			sendErr = client.SendMeText(r.Context(), msgText, payload.URL, payload.ButtonTitle)
+			sendErr = client.Memo().SendText(r.Context(), msgReq)
 		}
 
 		if sendErr != nil {

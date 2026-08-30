@@ -26,9 +26,15 @@ func TestWebhookServer_Healthz(t *testing.T) {
 		})
 	}()
 
-	time.Sleep(100 * time.Millisecond)
-
-	resp, err := http.Get("http://127.0.0.1:18081/healthz")
+	var resp *http.Response
+	var err error
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		resp, err = http.Get("http://127.0.0.1:18081/healthz")
+		if err == nil {
+			break
+		}
+	}
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

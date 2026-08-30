@@ -1,230 +1,194 @@
-# KakaoBot (카카오톡 메시지 전송 봇)
+# KakaoBot
 
-Golang으로 구현된 카카오톡 REST API 메시지 발송 CLI 및 라이브러리입니다.
-서버 모니터링 알림, CI/CD 배포 완료 알림, Cron 작업 결과 전송, 웹훅 릴레이 등을 카카오톡으로 간편하게 전송할 수 있습니다.
+KakaoBot is a modular Go library and CLI tool for interacting with Kakao REST APIs, sending KakaoTalk messages (memo, friends, templates), managing user sessions and CDN storage, running inbound webhook relay servers, and hosting Kakao i OpenBuilder chatbot skill webhook servers.
 
----
+## Architecture
 
-## ✨ 주요 기능
+The codebase adheres strictly to SOLID and Clean Architecture principles:
+- **Dependency Inversion (DIP)**: High-level use cases and callers depend entirely on domain interfaces (`kakao.Client`, `kakao.AuthService`, `kakao.UserService`, `kakao.MemoService`, `kakao.FriendsService`, `kakao.StorageService`, `kakao.TokenStore`).
+- **Interface Segregation (ISP)**: Services are broken down into focused interfaces instead of a single bloated monolith.
+- **Single Responsibility (SRP)**: Each service implementation (`auth_service.go`, `memo_service.go`, `friends_service.go`, `user_service.go`, `storage_service.go`) handles only its respective API domain.
+- **Functional Collections**: Collection transformations and filters use `github.com/samber/lo`.
+- **CLI Standard**: CLI commands are structured using Cobra and struct-tag binding via `github.com/dh-kam/refutils/flagsbinder`.
 
-- 🔐 **OAuth 2.0 자동 로그인 & 토큰 관리**:
-  - 로컬 브라우저 자동 오픈 및 콜백 서버를 통한 손쉬운 최초 로그인 (`kakaobot auth login`).
-  - Access Token 만료 시 Refresh Token을 이용한 **자동 갱신(Auto Refresh)**.
-- 💬 **나에게 보내기 (기본 메시지 / 피드 / 커스텀 템플릿)**:
-  - 텍스트, 링크, 버튼, 이미지 피드 메시지 전송.
-  - Stdin 파이프라인 지원 (`echo "알림" | kakaobot send me` 또는 `make build | kakaobot send me`).
-- 👥 **친구에게 보내기 & 친구 목록 조회**:
-  - 앱에 동의한 카카오톡 친구 목록 조회 (`kakaobot friends list`) 및 메시지 발송.
-- 🌐 **웹훅 릴레이 서버 (`kakaobot serve`)**:
-  - Prometheus Alertmanager, Grafana, GitHub Actions, curl 등 외부 시스템에서 HTTP POST로 카카오톡 메시지를 릴레이.
+```
+pkg/kakao/
+├── interfaces.go       # Core domain interfaces
+├── types.go            # Data models and API types
+├── errors.go           # Error types
+├── template.go         # Message template builders (Text, Feed, List, Commerce, Location)
+├── client.go           # Composite Client interface implementation
+├── auth_service.go     # OAuth2, token exchange, token refresh, logout, unlink
+├── user_service.go     # User profile and shipping address retrieval
+├── memo_service.go     # Send messages to oneself (/v2/api/talk/memo/*)
+├── friends_service.go  # Friend list discovery and friend messaging
+├── storage_service.go  # Kakao CDN image upload, scrape, and deletion
+└── token_store.go      # Thread-safe file and memory token stores
 
----
+pkg/openbuilder/
+├── types.go            # Kakao i OpenBuilder skill payload and response types
+└── builder.go          # Fluent response builder (SimpleText, BasicCard, Carousel, QuickReplies)
+```
 
-## 🛠 사전 준비: 카카오 개발자 콘솔 설정
+## Installation and Build
 
-카카오톡 메시지를 보내려면 먼저 [카카오 디벨로퍼스(Kakao Developers)](https://developers.kakao.com/)에서 앱을 생성하고 권한을 설정해야 합니다.
+The project uses an OS-ARCH-VARIANT build matrix in the `Makefile`.
 
-1. **애플리케이션 추가**:
-   - [Kakao Developers 콘솔](https://developers.kakao.com/) 로그인 후 `내 애플리케이션` > `애플리케이션 추가하기`
-   - 앱 이름, 사업자명 입력 후 생성
-
-2. **REST API 키 확인**:
-   - `앱 설정` > `요약 정보` 에서 **REST API 키** 확인 (예: `4a8xxxxxxxxxxxxxxxxxxxxxxxxxxxxx`)
-
-3. **플랫폼 등록**:
-   - `앱 설정` > `플랫폼` > `Web 플랫폼 등록`
-   - 사이트 도메인에 `http://localhost:8080` 등록
-
-4. **카카오 로그인 활성화 & Redirect URI 등록**:
-   - `제품 설정` > `카카오 로그인` > `활성화 설정`을 **ON**으로 변경
-   - `Redirect URI 등록` 클릭 후 `http://localhost:8080/callback` 추가
-
-5. **동의 항목 설정**:
-   - `제품 설정` > `카카오 로그인` > `동의항목` 메뉴 이동
-   - **카카오톡 메시지 전송 (`talk_message`)**: `접근권한 관리` > **선택 동의** (또는 필수) 설정
-   - **프로필 정보 (`profile_nickname`)**: **필수 동의** 또는 **선택 동의**
-   - *(친구에게 보낼 경우)* **카카오 서비스 내 친구 목록 (`friends`)**: **선택 동의** 설정
-
-6. *(선택사항) 보안 설정*:
-   - `제품 설정` > `카카오 로그인` > `보안`에서 Client Secret 생성 시 `KAKAO_CLIENT_SECRET`으로 전달 가능.
-
----
-
-## 🚀 빌드 및 실행
-
-### 1. 빌드 (Makefile)
 ```bash
-# Debug 바이너리 빌드 (build/linux-amd64/debug/kakaobot)
+# Build debug binary for current architecture
 make linux-amd64-debug
 
-# Static Release 바이너리 빌드 (build/linux-amd64/release/kakaobot)
+# Build statically linked standalone release binary
 make linux-amd64-release
 
-# 또는 현재 플랫폼 대상 빌드
-go build -o kakaobot .
+# Run unit tests with race detection and linter
+make test
+make lint
+
+# Clean build artifacts
+make clean
 ```
 
-### 2. 환경변수 설정 (권장)
-매번 CLI 옵션으로 `--client-id`를 넘기지 않도록 `~/.bashrc` 또는 `~/.zshrc`에 등록합니다:
+Artifacts are produced in `build/<os>-<arch>/<variant>/kakaobot`.
 
-```bash
-export KAKAO_REST_API_KEY="your_rest_api_key_here"
-# 선택 사항:
-# export KAKAO_CLIENT_SECRET="your_client_secret_here"
-# export KAKAO_REDIRECT_URI="http://localhost:8080/callback"
-# export KAKAO_TOKEN_PATH="~/.config/kakao-bot/tokens.json"
+## Configuration
+
+Credentials can be provided via environment variables or a local `.env` file:
+
+```dotenv
+KAKAO_REST_API_KEY=your_rest_api_key
+KAKAO_CLIENT_SECRET=your_client_secret
+KAKAO_REDIRECT_URI=http://localhost:8080/callback
+KAKAO_TOKEN_PATH=~/.config/kakao-bot/tokens.json
 ```
 
----
+## CLI Usage
 
-## 📖 사용 가이드
+### Authentication (`auth`)
 
-### 1. 최초 인증 (OAuth 2.0 로그인)
 ```bash
-# 로컬 브라우저가 열리며 카카오 로그인 및 메시지 전송 권한 동의를 진행합니다.
+# Verify REST API Key configuration
+kakaobot auth check
+
+# OAuth 2.0 login with automatic local callback listener
 kakaobot auth login
 
-# 수동으로 코드를 입력하여 인증하고 싶은 경우 (원격 서버 / Headless 환경)
-kakaobot auth login --manual
-```
-> 로그인 성공 시 토큰 정보가 `~/.config/kakao-bot/tokens.json`에 안전하게 저장됩니다.
-
-### 2. 인증 상태 확인 및 프로필 조회
-```bash
+# Check authentication status and token expiry
 kakaobot auth status
-```
-```text
-KakaoTalk Authentication Status:
-  User ID:         123456789
-  Nickname:        홍길동
-  Token File:      /home/user/.config/kakao-bot/tokens.json
-  Token Scope:     talk_message friends profile_nickname
-  Access Expired:  false
-  Refresh Expired: false
+
+# Force refresh access token
+kakaobot auth refresh
+
+# Logout and clear local tokens
+kakaobot auth logout
+
+# Unlink app connection
+kakaobot auth unlink
 ```
 
-### 3. 나에게 메시지 보내기
+### Messaging (`send`)
 
-#### 기본 텍스트 메시지
 ```bash
-kakaobot send me "🚀 서버 배포가 정상적으로 완료되었습니다!"
-```
+# Send text message to oneself
+kakaobot send me "Deployment completed successfully"
 
-#### Stdin 파이프로 메시지 전송 (모니터링 / 스크립트 연동)
-```bash
-# 빌드 로그 또는 명령어 결과를 카카오톡으로 전송
-make test 2>&1 | kakaobot send me
+# Send text with URL and custom button
+kakaobot send me "New release available" --url "https://github.com" --button "View Release"
 
-# 디스크 사용량 알림
-df -h | kakaobot send me
-```
+# Pipe text from stdin
+uptime | kakaobot send me
 
-#### 링크 및 버튼 포함 메시지
-```bash
-kakaobot send me "새로운 공지사항이 등록되었습니다." \
-  --url "https://example.com/notice/1" \
-  --button "공지 확인하기"
-```
-
-#### 이미지 피드(Feed) 카드 메시지
-```bash
+# Send rich feed card
 kakaobot send me \
-  --title "일일 시스템 모니터링 보고서" \
-  --description "CPU: 12%, Memory: 45%, Storage: 60%" \
+  --title "System Alert" \
+  --description "High CPU usage detected: 92%" \
   --image-url "https://via.placeholder.com/600x400.png" \
-  --url "https://grafana.example.com" \
-  --button "대시보드 바로가기"
+  --url "https://dashboard.example.com" \
+  --button "Open Dashboard"
+
+# Send message to friends by UUID
+kakaobot send friend -R "<RECEIVER_UUID>" "Hello friend"
 ```
 
----
-
-### 4. 친구에게 메시지 보내기
-
-#### 친구 목록 조회 (UUID 확인)
-```bash
-kakaobot friends list
-```
-```text
-Found 2 KakaoTalk Friend(s) (Total: 2):
-UUID                                 | Nickname             | Messageable
--------------------------------------+----------------------+------------
-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx | 김철수               | Yes
-yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy | 이영희               | Yes
-```
-
-#### 친구에게 메시지 발송
-```bash
-kakaobot send friend "회의실 3층으로 모여주세요." -R "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-```
-
----
-
-### 5. 웹훅 릴레이 서버 실행 (`kakaobot serve`)
-
-외부 알림(Alertmanager, GitHub Webhook, Jenkins, curl)을 받아 카카오톡으로 전달하는 백그라운드 HTTP 서버를 구동할 수 있습니다.
+### User Profile (`user`)
 
 ```bash
-# 기본 포트(127.0.0.1:8080)로 웹훅 서버 구동
+# Get authenticated user profile
+kakaobot user me
+
+# Query registered shipping addresses
+kakaobot user address
+```
+
+### CDN Storage (`storage`)
+
+```bash
+# Upload image to Kakao CDN for use in messages
+kakaobot storage upload ./alert-chart.png
+
+# Delete uploaded image from Kakao CDN
+kakaobot storage delete "https://k.kakaocdn.net/..."
+```
+
+### Webhook Relay Server (`serve`)
+
+Starts an HTTP server that relays incoming webhook alerts (e.g. Grafana, Alertmanager, GitHub) to KakaoTalk:
+
+```bash
 kakaobot serve --listen ":8080"
 ```
 
-#### 웹훅 발송 예시 (curl)
+Send webhook:
 ```bash
 curl -X POST http://localhost:8080/webhook \
   -H "Content-Type: application/json" \
-  -d '{
-    "text": "🚨 [긴급] Production 서버 CPU 사용률 90% 초과!",
-    "url": "https://grafana.example.com/d/alerts",
-    "button_title": "Grafana 보기"
-  }'
+  -d '{"text": "Server alert from Prometheus"}'
 ```
 
----
+### Chatbot Skill Server (`skill`)
 
-## 💻 Go 코드에서 라이브러리로 사용하기
+Starts a Kakao i OpenBuilder skill webhook server for channel `@0xc0de1ab`:
 
-`pkg/kakao` 패키지를 가져와 자신의 Go 프로젝트에서 직접 카카오 API 클라이언트로 활용할 수 있습니다.
+```bash
+kakaobot skill serve --listen ":8080" --channel-id "0xc0de1ab"
+```
+
+## Go Library Usage
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+    "github.com/dh-kam/kakao-bot/pkg/kakao"
 )
 
 func main() {
-	ctx := context.Background()
+    client := kakao.NewClient(kakao.ClientConfig{
+        ClientID:     "your-rest-api-key",
+        ClientSecret: "your-client-secret",
+    })
 
-	// 1. OAuth 클라이언트 & 토큰 저장소 초기화
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
-		ClientID: "YOUR_KAKAO_REST_API_KEY",
-	})
-	tokenStore := kakao.NewFileTokenStore(kakao.DefaultTokenPath())
+    ctx := context.Background()
 
-	// 2. 카카오 API 클라이언트 생성 (토큰 만료 시 자동 갱신 지원)
-	client := kakao.NewClient(kakao.ClientConfig{
-		OAuthClient: oauthClient,
-		TokenStore:  tokenStore,
-	})
+    // Send memo text
+    err := client.Memo().SendText(ctx, kakao.TextMessageRequest{
+        Text:        "Hello from Go client!",
+        WebURL:      "https://github.com",
+        ButtonTitle: "Visit",
+    })
+    if err != nil {
+        log.Fatalf("send memo: %v", err)
+    }
 
-	// 3. 나에게 메시지 전송
-	err := client.SendMeText(ctx, "Go 프로그램에서 전송한 카카오톡 알림입니다.", "https://github.com", "자세히 보기")
-	if err != nil {
-		log.Fatalf("메시지 전송 실패: %v", err)
-	}
-
-	fmt.Println("카카오톡 메시지 전송 성공!")
+    // Get user profile
+    profile, err := client.User().GetMe(ctx)
+    if err != nil {
+        log.Fatalf("get profile: %v", err)
+    }
+    fmt.Printf("User ID: %d\n", profile.ID)
 }
-```
-
----
-
-## 🧪 테스트 실행
-
-```bash
-go test -v ./...
 ```

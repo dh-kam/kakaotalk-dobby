@@ -35,7 +35,6 @@ func NewLoginUseCase() *LoginUseCase {
 	return &LoginUseCase{}
 }
 
-// Execute performs the login flow.
 func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 	out := req.Out
 	if out == nil {
@@ -49,19 +48,19 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 		req.RedirectURI = "http://localhost:8080/callback"
 	}
 
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
+	client := kakao.NewClient(kakao.ClientConfig{
 		ClientID:     req.ClientID,
 		ClientSecret: req.ClientSecret,
 		RedirectURI:  req.RedirectURI,
+		TokenStore:   kakao.NewFileTokenStore(req.TokenPath),
 	})
 
-	store := kakao.NewFileTokenStore(req.TokenPath)
+	authSvc := client.Auth()
 
 	code := req.Code
 	if code == "" && !req.Manual && strings.HasPrefix(req.RedirectURI, "http://localhost") {
-		// Attempt local HTTP server callback flow
 		var err error
-		code, err = uc.waitForLocalCallback(ctx, oauthClient, req)
+		code, err = uc.waitForLocalCallback(ctx, authSvc, req)
 		if err != nil {
 			fmt.Fprintf(out, "Local callback listener failed (%v). Switching to manual prompt...\n", err)
 			code = ""
@@ -69,7 +68,7 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 	}
 
 	if code == "" {
-		authURL := oauthClient.GetAuthCodeURL(req.Scopes)
+		authURL := authSvc.GetAuthURL(req.Scopes)
 		fmt.Fprintln(out, "Please open the following URL in your browser to authorize:")
 		fmt.Fprintf(out, "\n  %s\n\n", authURL)
 		fmt.Fprint(out, "Enter the authorization code (or full redirect URL): ")
@@ -96,12 +95,12 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 	}
 
 	fmt.Fprintln(out, "Exchanging authorization code for tokens...")
-	token, err := oauthClient.ExchangeToken(ctx, code)
+	token, err := authSvc.ExchangeCode(ctx, code)
 	if err != nil {
 		return fmt.Errorf("exchange token: %w", err)
 	}
 
-	if err := store.Save(ctx, token); err != nil {
+	if err := client.GetTokenStore().Save(ctx, token); err != nil {
 		return fmt.Errorf("save token: %w", err)
 	}
 
@@ -109,7 +108,7 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 	return nil
 }
 
-func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, oauthClient *kakao.OAuthClient, req LoginRequest) (string, error) {
+func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, authSvc kakao.AuthService, req LoginRequest) (string, error) {
 	u, err := url.Parse(req.RedirectURI)
 	if err != nil {
 		return "", err
@@ -166,7 +165,7 @@ func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, oauthClient *k
 		}
 	}()
 
-	authURL := oauthClient.GetAuthCodeURL(req.Scopes)
+	authURL := authSvc.GetAuthURL(req.Scopes)
 	fmt.Fprintln(req.Out, "Opening browser for Kakao authorization...")
 	fmt.Fprintf(req.Out, "\n  %s\n\n", authURL)
 	fmt.Fprintln(req.Out, "Waiting for callback on", req.RedirectURI, "...")
@@ -218,18 +217,14 @@ func (uc *StatusUseCase) Execute(ctx context.Context, req StatusRequest) error {
 		return fmt.Errorf("load token: %w", err)
 	}
 
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
+	client := kakao.NewClient(kakao.ClientConfig{
 		ClientID:     req.ClientID,
 		ClientSecret: req.ClientSecret,
 		RedirectURI:  req.RedirectURI,
+		TokenStore:   store,
 	})
 
-	client := kakao.NewClient(kakao.ClientConfig{
-		OAuthClient: oauthClient,
-		TokenStore:  store,
-	})
-
-	profile, err := client.GetMe(ctx)
+	profile, err := client.User().GetMe(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch user profile: %w", err)
 	}
@@ -285,12 +280,13 @@ func (uc *RefreshUseCase) Execute(ctx context.Context, req RefreshRequest) error
 		return fmt.Errorf("refresh token is empty; please run 'kakaobot auth login' again")
 	}
 
-	oauthClient := kakao.NewOAuthClient(kakao.OAuthConfig{
+	client := kakao.NewClient(kakao.ClientConfig{
 		ClientID:     req.ClientID,
 		ClientSecret: req.ClientSecret,
+		TokenStore:   store,
 	})
 
-	refreshed, err := oauthClient.RefreshToken(ctx, token.RefreshToken)
+	refreshed, err := client.Auth().RefreshToken(ctx, token.RefreshToken)
 	if err != nil {
 		return fmt.Errorf("refresh token: %w", err)
 	}
