@@ -239,28 +239,7 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 		return resp
 
 	default:
-		// 1. Fast Path for Holidays (Sub-5ms response)
-		if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "쉬는 날") || strings.Contains(text, "빨간날") || strings.Contains(text, "빨간 날") || strings.Contains(text, "무슨 날") || strings.Contains(text, "무슨날") {
-			if resp := handleHolidayFastPath(text); resp != nil {
-				return resp
-			}
-		}
-
-		// 2. Fast Path for Scheduler (Sub-10ms response for direct reminder/recurring commands)
-		if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
-			if resp := handleScheduleFastPath(schedEngine, text); resp != nil {
-				return resp
-			}
-		}
-
-		// 3. Native TextCard Fast Path for Bus Schedule (Sub-100ms response & native UI)
-		if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
-			if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
-				return resp
-			}
-		}
-
-		// 2. Autonomous Agent or AI Provider fallback with 4.8s timeout
+		// 1. Autonomous AI Agent First (LLM Reasoning & Function Calling)
 		aiCtx, cancel := context.WithTimeout(ctx, 4800*time.Millisecond)
 		defer cancel()
 
@@ -284,6 +263,27 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("알림 목록", "알림 목록")
 				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+				return resp
+			}
+		}
+
+		// 2. Fallback Fast Path for Holidays if Agent fails or is disabled
+		if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "쉬는 날") || strings.Contains(text, "빨간날") || strings.Contains(text, "빨간 날") || strings.Contains(text, "무슨 날") || strings.Contains(text, "무슨날") {
+			if resp := handleHolidayFastPath(text); resp != nil {
+				return resp
+			}
+		}
+
+		// 3. Fallback Fast Path for Scheduler if Agent fails
+		if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
+			if resp := handleScheduleFastPath(schedEngine, text); resp != nil {
+				return resp
+			}
+		}
+
+		// 4. Fallback Fast Path for Bus Schedule if Agent fails
+		if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
+			if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
 				return resp
 			}
 		}
