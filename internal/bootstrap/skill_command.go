@@ -5,6 +5,8 @@ import (
 
 	"github.com/dh-kam/kakao-bot/internal/config"
 	"github.com/dh-kam/kakao-bot/internal/usecase/skill"
+	"github.com/dh-kam/kakao-bot/pkg/academy"
+	"github.com/dh-kam/kakao-bot/pkg/agent"
 	"github.com/dh-kam/kakao-bot/pkg/ai"
 	"github.com/dh-kam/refutils/flagsbinder"
 	"github.com/spf13/cobra"
@@ -49,7 +51,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "serve",
-		Short:         "Start Kakao i OpenBuilder chatbot skill webhook server with AI integration",
+		Short:         "Start Kakao i OpenBuilder chatbot skill webhook server with AI & Autonomous Agent integration",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -70,10 +72,39 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
+			// Initialize Agent if Vertex AI or Bedrock is configured
+			var botAgent agent.Agent
+			if cfg.VertexAPIKey != "" {
+				vProvider, err := agent.NewLLMProvider(agent.ProviderOptions{
+					ProviderName: "vertex",
+					Model:        "gemini-3.7-flash",
+					Project:      cfg.VertexProject,
+					Location:     cfg.VertexLocation,
+					APIKey:       cfg.VertexAPIKey,
+				})
+				if err == nil {
+					registry := agent.NewToolRegistry()
+					registry.Register(&agent.ServerStatusTool{})
+
+					busSvc := academy.NewService()
+					_ = busSvc.LoadFromDir("data/schedules")
+					_ = busSvc.LoadFromDir("data")
+					registry.Register(agent.NewBusScheduleTool(busSvc))
+
+					botAgent = agent.NewAgent(agent.AgentConfig{
+						Provider:      vProvider,
+						Tools:         registry,
+						SystemPrompt:  "You are a helpful and polite KakaoTalk AI assistant for channel @0xc0de1ab. You have access to tools for looking up academy bus schedules (e.g. 정상어학원, 강의하는아이들) and server status. Always answer politely and concisely in Korean.",
+						MaxIterations: 3,
+					})
+				}
+			}
+
 			return skill.NewSkillServeUseCase().Execute(cmd.Context(), skill.SkillServeRequest{
 				ListenAddr:   opts.ListenAddr,
 				ChannelID:    opts.ChannelID,
 				AIProvider:   aiProvider,
+				Agent:        botAgent,
 				SystemPrompt: opts.AISystemPrompt,
 				Out:          cmd.OutOrStdout(),
 			})

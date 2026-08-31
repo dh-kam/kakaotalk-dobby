@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dh-kam/kakao-bot/pkg/agent"
 	"github.com/dh-kam/kakao-bot/pkg/ai"
 	"github.com/dh-kam/kakao-bot/pkg/openbuilder"
 )
@@ -21,6 +22,7 @@ type SkillServeRequest struct {
 	ListenAddr   string
 	ChannelID    string
 	AIProvider   ai.Provider
+	Agent        agent.Agent
 	SystemPrompt string
 	Out          io.Writer
 }
@@ -60,27 +62,29 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			return
 		}
 
-		body, err := io.ReadAll(r.Body)
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
 		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
 		defer r.Body.Close()
 
 		var payload openbuilder.SkillPayload
 		if err := json.Unmarshal(body, &payload); err != nil {
-			http.Error(w, "Invalid OpenBuilder JSON", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 			return
 		}
 
 		utterance := strings.TrimSpace(payload.UserRequest.Utterance)
-		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", payload.UserRequest.User.ID, utterance)
+		if utterance == "" {
+			utterance = payload.Action.Params["utterance"]
+		}
 
-		response := processUtterance(r.Context(), utterance, req.ChannelID, req.AIProvider, req.SystemPrompt)
+		respPayload := processUtterance(r.Context(), utterance, req.ChannelID, req.Agent, req.AIProvider, req.SystemPrompt)
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(respPayload)
 	}
 
 	mux.HandleFunc("/skill", handler)
@@ -97,7 +101,11 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
-	fmt.Fprintf(out, "  - AI Provider:  %s\n", req.AIProvider.Name())
+	if req.Agent != nil {
+		fmt.Fprintf(out, "  - Autonomous Agent: Active (%d tools registered)\n", len(req.Agent.GetTools()))
+	} else {
+		fmt.Fprintf(out, "  - AI Provider:  %s\n", req.AIProvider.Name())
+	}
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -117,16 +125,16 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(ctx context.Context, utterance, channelID string, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, channelID string, botAgent agent.Agent, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
 	text := strings.ToLower(utterance)
 
 	switch {
 	case text == "도움말" || text == "help" || text == "?":
 		resp := openbuilder.NewSimpleTextResponse(
-			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n사용 가능한 명령어:\n- 💬 상태: 서버 상태 및 가동 시간 확인\n- ⏰ 시간: 서버 현재 시각 확인\n- 🏓 핑: 응답 테스트 (Ping-Pong)\n- ℹ️ 채널: 채널 정보 및 링크\n\n💡 원하는 질문을 자유롭게 입력하시면 AI가 직접 답변해 드립니다!",
+			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n사용 가능한 질문 예시:\n- 🚌 \"정상어학원 우미린 2차 버스 몇 시에 와?\"\n- 🚌 \"정상어학원 2호차 등원 시간표 알려줘\"\n- 💬 \"서버 상태 확인해줘\"\n- ℹ️ \"채널 정보\"\n\n💡 원하는 질문을 자유롭게 입력하시면 AI Agent가 도구를 호출하여 정확히 답변해 드립니다!",
 		)
+		resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
 		resp.AddQuickReply("서버 상태", "상태")
-		resp.AddQuickReply("현재 시간", "시간")
 		resp.AddQuickReply("채널 정보", "채널")
 		return resp
 
@@ -140,26 +148,24 @@ func processUtterance(ctx context.Context, utterance, channelID string, aiProvid
 			"🖥️ 서버 상태 보고서",
 			desc,
 			"",
-			openbuilder.NewMessageButton("새로고침", "상태"),
+			openbuilder.NewMessageButton("다시 조회", "상태"),
 			openbuilder.NewMessageButton("도움말", "도움말"),
 		)
 		return resp
 
-	case text == "시간" || text == "time" || text == "현재시간":
-		now := time.Now().Format("2006-01-02 15:04:05 (MST)")
-		resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("⏰ 현재 서버 시간:\n%s", now))
-		resp.AddQuickReply("서버 상태", "상태")
-		resp.AddQuickReply("도움말", "도움말")
+	case text == "시간" || text == "현재시간" || text == "time":
+		now := time.Now().Format("2006년 01월 02일 15:04:05 (MST)")
+		resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("⏰ 현재 서버 시각: %s", now))
+		resp.AddQuickReply("상태 확인", "상태")
 		return resp
 
 	case text == "핑" || text == "ping":
-		resp := openbuilder.NewSimpleTextResponse("🏓 퐁! 정상 동작 중입니다.")
-		resp.AddQuickReply("서버 상태", "상태")
+		resp := openbuilder.NewSimpleTextResponse("🏓 퐁! (Pong) 서버가 정상적으로 응답하고 있습니다.")
 		return resp
 
 	case strings.Contains(text, "채널") || strings.Contains(text, "정보") || strings.Contains(text, channelID):
 		resp := openbuilder.NewBasicCardResponse(
-			fmt.Sprintf("🔬 0xc0de1ab Kakao AI Chatbot"),
+			"🔬 0xc0de1ab Kakao AI Chatbot",
 			"카카오톡 채널 @0xc0de1ab AI 연동 공식 챗봇 스킬 서버입니다.",
 			"",
 			openbuilder.NewWebButton("개발 블로그 / Outline", "https://outline.0xc0de1ab.dev"),
@@ -168,33 +174,37 @@ func processUtterance(ctx context.Context, utterance, channelID string, aiProvid
 		return resp
 
 	default:
-		// Forward to AI Provider with 3.5s timeout to guarantee safety under Kakao 5s limit
+		// Forward to Autonomous Agent or AI Provider with 3.5s timeout to guarantee safety under Kakao 5s limit
 		aiCtx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
 		defer cancel()
 
-		aiResp, err := aiProvider.GenerateResponse(aiCtx, ai.CompletionRequest{
-			SystemPrompt: systemPrompt,
-			Messages: []ai.ChatMessage{
-				{Role: "user", Content: utterance},
-			},
-		})
-
-		if err != nil {
-			resp := openbuilder.NewSimpleTextResponse(
-				fmt.Sprintf("⚠️ AI 응답 생성 중 오류가 발생했습니다: %v\n\n잠시 후 다시 시도해 주세요.", err),
-			)
-			resp.AddQuickReply("도움말", "도움말")
-			return resp
+		if botAgent != nil {
+			agentRes, err := botAgent.Run(aiCtx, utterance)
+			if err == nil && agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
+				resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(agentRes.Output))
+				resp.AddQuickReply("도움말", "도움말")
+				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+				return resp
+			}
 		}
 
-		replyText := strings.TrimSpace(aiResp.Text)
-		if replyText == "" {
-			replyText = "답변을 생성하지 못했습니다."
+		if aiProvider != nil {
+			aiResp, err := aiProvider.GenerateResponse(aiCtx, ai.CompletionRequest{
+				SystemPrompt: systemPrompt,
+				Messages: []ai.ChatMessage{
+					{Role: "user", Content: utterance},
+				},
+			})
+			if err == nil && aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
+				resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(aiResp.Text))
+				resp.AddQuickReply("도움말", "도움말")
+				resp.AddQuickReply("서버 상태", "상태")
+				return resp
+			}
 		}
 
-		resp := openbuilder.NewSimpleTextResponse(replyText)
+		resp := openbuilder.NewSimpleTextResponse("답변을 생성하지 못했습니다. 다시 시도해 주세요.")
 		resp.AddQuickReply("도움말", "도움말")
-		resp.AddQuickReply("서버 상태", "상태")
 		return resp
 	}
 }

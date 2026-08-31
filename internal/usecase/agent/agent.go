@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/dh-kam/kakao-bot/pkg/academy"
 	"github.com/dh-kam/kakao-bot/pkg/agent"
 	"github.com/dh-kam/kakao-bot/pkg/kakao"
 )
@@ -65,6 +66,11 @@ func (uc *AgentRunUseCase) Execute(ctx context.Context, req AgentRunRequest) err
 	registry := agent.NewToolRegistry()
 	registry.Register(&agent.ServerStatusTool{})
 
+	busSvc := academy.NewService()
+	_ = busSvc.LoadFromDir("data/schedules")
+	_ = busSvc.LoadFromDir("data")
+	registry.Register(agent.NewBusScheduleTool(busSvc))
+
 	if req.ClientID != "" {
 		kakaoClient := kakao.NewClient(kakao.ClientConfig{
 			ClientID:     req.ClientID,
@@ -78,7 +84,7 @@ func (uc *AgentRunUseCase) Execute(ctx context.Context, req AgentRunRequest) err
 	botAgent := agent.NewAgent(agent.AgentConfig{
 		Provider:      llmProvider,
 		Tools:         registry,
-		SystemPrompt:  "You are an intelligent KakaoBot Agent. You have access to tools for checking server metrics and sending KakaoTalk messages. Think step-by-step and call appropriate tools when needed.",
+		SystemPrompt:  "You are an intelligent KakaoBot Agent. You have access to tools for looking up academy shuttle bus schedules (e.g. 정상어학원, 강의하는아이들), checking server metrics, and sending KakaoTalk messages. Think step-by-step and call appropriate tools when needed. Always respond in clear, polite Korean.",
 		MaxIterations: 5,
 	})
 
