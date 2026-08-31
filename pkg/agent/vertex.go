@@ -40,8 +40,8 @@ func NewVertexProvider(cfg VertexConfig) LLMProvider {
 		project = "c0de1ab-dev-494714"
 	}
 	loc := cfg.Location
-	if loc == "" {
-		loc = "global"
+	if loc == "" || loc == "global" {
+		loc = "us-central1"
 	}
 	model := cfg.Model
 	if model == "" {

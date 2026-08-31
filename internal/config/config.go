@@ -68,8 +68,8 @@ func Load() *AppConfig {
 	}
 
 	vertexLocation := os.Getenv("VERTEX_LOCATION")
-	if vertexLocation == "" {
-		vertexLocation = "global"
+	if vertexLocation == "" || vertexLocation == "global" {
+		vertexLocation = "us-central1"
 	}
 
 	bedrockRegion := os.Getenv("AWS_REGION")
