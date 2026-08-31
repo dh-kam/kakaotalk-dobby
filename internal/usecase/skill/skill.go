@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -354,76 +355,46 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 
 	first := matches[0]
 
-	// Build compact, beautiful ItemList for ItemCard (Never truncated)
-	var items []openbuilder.ItemCardItem
+	var sb strings.Builder
+	if displayLocName != "" {
+		sb.WriteString(fmt.Sprintf("[%s • %s 시간표]\n\n", displayLocName, first.ScheduleType))
+	}
+
 	for _, m := range matches {
-		locLabel := m.Location
-		locLabel = strings.TrimSuffix(locLabel, " 승강장")
-		locLabel = strings.TrimSuffix(locLabel, "승강장")
+		sb.WriteString(fmt.Sprintf("📍 %s\n", m.Location))
 
-		for cls, tm := range m.Times {
-			clsShort := cls
-			if strings.Contains(cls, "3시 40분") {
-				clsShort = "3:40"
-			} else if strings.Contains(cls, "5시 20분") {
-				clsShort = "5:20"
-			} else {
-				clsShort = strings.TrimSuffix(clsShort, " 수업")
-			}
-
-			var title string
-			if matchedLoc != "" && strings.Contains(locLabel, matchedLoc) && (strings.Contains(locLabel, "정문") || strings.Contains(locLabel, "후문")) {
-				if strings.Contains(locLabel, "후문") {
-					title = fmt.Sprintf("후문 (%s)", clsShort)
-				} else if strings.Contains(locLabel, "정문") {
-					title = fmt.Sprintf("정문 (%s)", clsShort)
-				} else {
-					title = fmt.Sprintf("%s (%s)", locLabel, clsShort)
-				}
-			} else {
-				title = fmt.Sprintf("%s (%s)", locLabel, clsShort)
-			}
-
-			items = append(items, openbuilder.ItemCardItem{
-				Title:       title,
-				Description: tm,
-			})
+		// Sort class times for consistent presentation
+		var classKeys []string
+		for cls := range m.Times {
+			classKeys = append(classKeys, cls)
 		}
+		sort.Strings(classKeys)
+
+		for _, cls := range classKeys {
+			tm := m.Times[cls]
+			note := ""
+			if m.Highlighted && strings.Contains(cls, "3시 40분") {
+				note = " (강조)"
+			}
+			sb.WriteString(fmt.Sprintf("  • %s: %s%s\n", cls, tm, note))
+		}
+		sb.WriteString("\n")
 	}
 
-	// Limit to max 10 items (Kakao ItemCard limitation)
-	if len(items) > 10 {
-		items = items[:10]
-	}
+	sb.WriteString("💡 3분 전까지 승강장에 대기해 주세요.\n")
+	sb.WriteString(fmt.Sprintf("📞 차량 문의: %s", first.Contact))
 
 	phoneClean := strings.ReplaceAll(first.Contact, "-", "")
 	phoneClean = strings.ReplaceAll(phoneClean, " ", "")
 
-	cardDesc := fmt.Sprintf("%s 시간표 안내", first.ScheduleType)
-	if displayLocName != "" {
-		cardDesc = fmt.Sprintf("%s • %s 시간표", displayLocName, first.ScheduleType)
-	}
+	cardTitle := fmt.Sprintf("🚌 %s %s", first.AcademyName, first.VehicleNumber)
 
-	card := &openbuilder.ItemCard{
-		ImageTitle: &openbuilder.ItemCardImageTitle{
-			Title:       fmt.Sprintf("%s %s", first.AcademyName, first.VehicleNumber),
-			Description: cardDesc,
-		},
-		Title:             "승강장별 탑승 시각",
-		Description:       "• 표기된 시각 3분 전까지 승강장에 대기해 주세요.",
-		ItemList:          items,
-		ItemListAlignment: "right",
-		ItemListSummary: &openbuilder.ItemCardSummary{
-			Title:       "차량 문의",
-			Description: first.Contact,
-		},
-		Buttons: []openbuilder.CardButton{
-			openbuilder.NewPhoneButton("기사님 전화 연결", phoneClean),
-			openbuilder.NewMessageButton("다른 정류장 조회", "정상어학원 버스 시간표 알려줘"),
-		},
-	}
-
-	resp := openbuilder.NewItemCardResponse(card)
+	resp := openbuilder.NewTextCardResponse(
+		cardTitle,
+		strings.TrimSpace(sb.String()),
+		openbuilder.NewPhoneButton("기사님 전화 연결", phoneClean),
+		openbuilder.NewMessageButton("다른 정류장 조회", "정상어학원 버스 시간표 알려줘"),
+	)
 	resp.AddQuickReply("우미린 2차 시간", "우미린 2차 버스 몇 시에 와?")
 	resp.AddQuickReply("양포도서관 시간", "양포도서관 버스 몇 시에 와?")
 	resp.AddQuickReply("도움말", "도움말")
