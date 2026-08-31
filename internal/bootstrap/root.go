@@ -25,6 +25,7 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 		newStorageCommand(ctx),
 		newServeCommand(ctx),
 		newSkillCommand(ctx),
+		newAgentCommand(ctx),
 	)
 
 	return rootCmd
