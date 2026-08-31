@@ -240,7 +240,7 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 
 	default:
 		// 1. Fast Path for Holidays (Sub-5ms response)
-		if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "빨간날") {
+		if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "쉬는 날") || strings.Contains(text, "빨간날") || strings.Contains(text, "빨간 날") || strings.Contains(text, "무슨 날") || strings.Contains(text, "무슨날") {
 			if resp := handleHolidayFastPath(text); resp != nil {
 				return resp
 			}
