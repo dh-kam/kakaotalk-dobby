@@ -300,44 +300,45 @@ func isBusQuery(text string) bool {
 }
 
 func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {
-	aliasMap := map[string]string{
-		"우미린더스카이": "우미린2차",
-		"더스카이":   "우미린2차",
-		"센트럴파크":  "우미린2차",
-		"풀하우스":   "우미린1차",
-		"우미린 2차": "우미린2차",
-		"우미린2차":  "우미린2차",
-		"우미린 1차": "우미린1차",
-		"우미린1차":  "우미린1차",
-		"우미린":    "우미린",
-		"해마루초":   "해마루초",
-		"해마루":    "해마루초",
-		"이편한":    "이편한",
-		"중흥1차":   "중흥1차",
-		"중흥 1차":  "중흥1차",
-		"중흥":     "중흥",
-		"현진 103동": "현진 103동",
-		"현진 108동": "현진 108동",
-		"현진 남문":  "현진 남문",
-		"현진":     "현진",
-		"양포도서관":  "양포도서관",
-		"양포":     "양포도서관",
-		"호반베르디움": "호반",
-		"호반":     "호반",
-		"원당초":    "원당초",
-		"원당":     "원당초",
+	type aliasEntry struct {
+		keyword   string
+		canonical string
+		label     string
+	}
+	aliases := []aliasEntry{
+		{keyword: "우미린더스카이", canonical: "우미린2차", label: "우미린 2차 (더스카이)"},
+		{keyword: "더스카이", canonical: "우미린2차", label: "우미린 2차 (더스카이)"},
+		{keyword: "센트럴파크", canonical: "우미린2차", label: "우미린 2차 (센트럴파크)"},
+		{keyword: "풀하우스", canonical: "우미린1차", label: "우미린 1차 (풀하우스)"},
+		{keyword: "우미린 2차", canonical: "우미린2차", label: "우미린 2차"},
+		{keyword: "우미린2차", canonical: "우미린2차", label: "우미린 2차"},
+		{keyword: "우미린 1차", canonical: "우미린1차", label: "우미린 1차"},
+		{keyword: "우미린1차", canonical: "우미린1차", label: "우미린 1차"},
+		{keyword: "우미린", canonical: "우미린2차", label: "우미린 2차"},
+		{keyword: "해마루초", canonical: "해마루초", label: "해마루초"},
+		{keyword: "해마루", canonical: "해마루초", label: "해마루초"},
+		{keyword: "이편한", canonical: "이편한", label: "이편한"},
+		{keyword: "중흥 1차", canonical: "중흥1차", label: "중흥 1차"},
+		{keyword: "중흥1차", canonical: "중흥1차", label: "중흥 1차"},
+		{keyword: "중흥", canonical: "중흥", label: "중흥"},
+		{keyword: "현진 103동", canonical: "현진 103동", label: "현진 103동"},
+		{keyword: "현진 108동", canonical: "현진 108동", label: "현진 108동"},
+		{keyword: "현진 남문", canonical: "현진 남문", label: "현진 남문"},
+		{keyword: "현진", canonical: "현진", label: "현진"},
+		{keyword: "양포도서관", canonical: "양포도서관", label: "양포도서관"},
+		{keyword: "양포", canonical: "양포도서관", label: "양포도서관"},
+		{keyword: "호반베르디움", canonical: "호반", label: "호반"},
+		{keyword: "호반", canonical: "호반", label: "호반"},
+		{keyword: "원당초", canonical: "원당초", label: "원당초"},
+		{keyword: "원당", canonical: "원당초", label: "원당초"},
 	}
 
 	var matchedLoc string
 	var displayLocName string
-	for kw, canonical := range aliasMap {
-		if strings.Contains(text, kw) {
-			matchedLoc = canonical
-			if kw == "우미린더스카이" || kw == "더스카이" {
-				displayLocName = "우미린 2차 (더스카이)"
-			} else {
-				displayLocName = canonical
-			}
+	for _, a := range aliases {
+		if strings.Contains(text, a.keyword) {
+			matchedLoc = a.canonical
+			displayLocName = a.label
 			break
 		}
 	}
