@@ -17,6 +17,7 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/agent"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
 )
@@ -213,10 +214,14 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 		)
 		return resp
 
-	case text == "시간" || text == "현재시간" || text == "time":
-		now := time.Now().Format("2006년 01월 02일 15:04:05 (MST)")
-		resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("⏰ 현재 서버 시각: %s", now))
+	case text == "시간" || text == "현재시간" || text == "time" || text == "지금몇시" || text == "몇시야" || text == "날짜" || text == "오늘날짜" || text == "요일" || text == "무슨요일":
+		now := time.Now().In(holidays.GetKSTLocation())
+		info := holidays.CheckDate(now)
+		resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("⏰ 현재 일시: %s (%s) %s\n📅 %s",
+			info.Date, info.Weekday, now.Format("15:04:05 KST"), info.Description))
+		resp.AddQuickReply("오늘 휴일이야?", "오늘 휴일이야?")
 		resp.AddQuickReply("상태 확인", "상태")
+		resp.AddQuickReply("도움말", "도움말")
 		return resp
 
 	case text == "핑" || text == "ping":
@@ -234,14 +239,21 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 		return resp
 
 	default:
-		// 1. Fast Path for Scheduler (Sub-10ms response for direct reminder/recurring commands)
+		// 1. Fast Path for Holidays (Sub-5ms response)
+		if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "빨간날") {
+			if resp := handleHolidayFastPath(text); resp != nil {
+				return resp
+			}
+		}
+
+		// 2. Fast Path for Scheduler (Sub-10ms response for direct reminder/recurring commands)
 		if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
 			if resp := handleScheduleFastPath(schedEngine, text); resp != nil {
 				return resp
 			}
 		}
 
-		// 2. Native ItemCard Fast Path for Bus Schedule (Sub-100ms response & native UI)
+		// 3. Native TextCard Fast Path for Bus Schedule (Sub-100ms response & native UI)
 		if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
 			if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
 				return resp
@@ -535,3 +547,45 @@ func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance string) *op
 
 	return nil
 }
+
+func handleHolidayFastPath(text string) *openbuilder.SkillResponse {
+	// If user asks about upcoming holidays: e.g. "다음 공휴일", "앞으로 공휴일"
+	if strings.Contains(text, "다음") || strings.Contains(text, "앞으로") || strings.Contains(text, "다가오는") {
+		upcoming := holidays.GetUpcomingHolidays(time.Now(), 5)
+		var sb strings.Builder
+		sb.WriteString("🗓️ 다가오는 대한민국 공휴일 안내:\n\n")
+		for i, u := range upcoming {
+			sb.WriteString(fmt.Sprintf("%d. %s (%s) - %s\n", i+1, u.Date, u.Weekday, u.HolidayName))
+		}
+		resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
+		resp.AddQuickReply("오늘 휴일이야?", "오늘 휴일이야?")
+		resp.AddQuickReply("현재 시간", "시간")
+		resp.AddQuickReply("도움말", "도움말")
+		return resp
+	}
+
+	info, err := holidays.ParseAndCheck(text)
+	if err != nil {
+		return nil
+	}
+
+	var msg string
+	if info.IsHoliday {
+		subText := ""
+		if info.IsSubstituteHoliday {
+			subText = " (대체공휴일)"
+		}
+		msg = fmt.Sprintf("🎉 %s (%s)은 공휴일[%s%s]입니다!", info.Date, info.Weekday, info.HolidayName, subText)
+	} else if info.IsWeekend {
+		msg = fmt.Sprintf("🏖️ %s (%s)은 주말입니다. (휴일)", info.Date, info.Weekday)
+	} else {
+		msg = fmt.Sprintf("💼 %s (%s)은 정상 평일(영업일)입니다.", info.Date, info.Weekday)
+	}
+
+	resp := openbuilder.NewSimpleTextResponse(msg)
+	resp.AddQuickReply("다음 공휴일", "다음 공휴일 언제야?")
+	resp.AddQuickReply("현재 시간", "시간")
+	resp.AddQuickReply("도움말", "도움말")
+	return resp
+}
+

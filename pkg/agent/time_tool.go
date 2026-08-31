@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
 )
 
-// CurrentTimeTool returns current date and time in KST (Asia/Seoul, UTC+9).
+// CurrentTimeTool returns current date, time, weekday, and holiday status in KST (Asia/Seoul, UTC+9).
 type CurrentTimeTool struct{}
 
 func (t *CurrentTimeTool) Name() string {
@@ -15,7 +17,7 @@ func (t *CurrentTimeTool) Name() string {
 }
 
 func (t *CurrentTimeTool) Description() string {
-	return "Get the current date, time, day of week, and timezone in Korea Standard Time (KST, Asia/Seoul, UTC+9). Use this tool to get the current reference time for bus schedules, relative time calculations, or setting reminders."
+	return "Get current date, time, weekday, and Korean holiday/business day status in Korea Standard Time (KST, Asia/Seoul, UTC+9). Use this to get current reference time, check if today is a holiday or weekend, and perform date/time calculations."
 }
 
 func (t *CurrentTimeTool) ParametersSchema() map[string]interface{} {
@@ -26,24 +28,33 @@ func (t *CurrentTimeTool) ParametersSchema() map[string]interface{} {
 }
 
 func (t *CurrentTimeTool) Execute(ctx context.Context, argsJSON string) (string, error) {
-	loc, err := time.LoadLocation("Asia/Seoul")
-	if err != nil {
-		loc = time.FixedZone("KST", 9*60*60)
-	}
-	now := time.Now().In(loc)
+	now := time.Now().In(holidays.GetKSTLocation())
+	hInfo := holidays.CheckDate(now)
 
-	weekdaysKo := []string{"일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"}
-	weekdayKo := weekdaysKo[now.Weekday()]
+	statusStr := "평일 (영업일)"
+	if hInfo.IsHoliday {
+		statusStr = fmt.Sprintf("공휴일: %s", hInfo.HolidayName)
+	} else if hInfo.IsWeekend {
+		statusStr = fmt.Sprintf("주말 (%s)", hInfo.Weekday)
+	}
 
 	result := map[string]interface{}{
 		"iso8601":          now.Format(time.RFC3339),
 		"formatted":        now.Format("2006-01-02 15:04:05 MST"),
-		"korean_formatted": fmt.Sprintf("%d년 %d월 %d일 %s %02d:%02d:%02d (KST)", now.Year(), now.Month(), now.Day(), weekdayKo, now.Hour(), now.Minute(), now.Second()),
-		"date":             now.Format("2006-01-02"),
+		"korean_formatted": fmt.Sprintf("%d년 %d월 %d일 %s %02d:%02d:%02d (%s)", now.Year(), now.Month(), now.Day(), hInfo.Weekday, now.Hour(), now.Minute(), now.Second(), statusStr),
+		"date":             hInfo.Date,
 		"time":             now.Format("15:04"),
+		"year":             hInfo.Year,
+		"month":            hInfo.Month,
+		"day":              hInfo.Day,
 		"hour":             now.Hour(),
 		"minute":           now.Minute(),
-		"weekday":          weekdayKo,
+		"weekday":          hInfo.Weekday,
+		"is_holiday":       hInfo.IsHoliday,
+		"is_weekend":       hInfo.IsWeekend,
+		"is_business_day":  hInfo.IsBusinessDay,
+		"holiday_name":     hInfo.HolidayName,
+		"day_type":         statusStr,
 		"timezone":         "Asia/Seoul (KST, UTC+9)",
 	}
 
