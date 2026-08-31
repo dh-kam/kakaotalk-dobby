@@ -140,7 +140,7 @@ func (p *vertexSDKProvider) GenerateWithTools(ctx context.Context, req ToolCompl
 		}
 
 		if m.Role == "tool" {
-			role = "tool"
+			role = "user"
 			var respMap map[string]any
 			if err := json.Unmarshal([]byte(m.Content), &respMap); err != nil {
 				respMap = map[string]any{"output": m.Content}
@@ -149,10 +149,14 @@ func (p *vertexSDKProvider) GenerateWithTools(ctx context.Context, req ToolCompl
 		}
 
 		if len(parts) > 0 {
-			contents = append(contents, &genai.Content{
-				Role:  role,
-				Parts: parts,
-			})
+			if len(contents) > 0 && contents[len(contents)-1].Role == role {
+				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, parts...)
+			} else {
+				contents = append(contents, &genai.Content{
+					Role:  role,
+					Parts: parts,
+				})
+			}
 		}
 	}
 
