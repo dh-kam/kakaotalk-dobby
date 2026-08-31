@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/dh-kam/kakao-bot/pkg/ai"
 	"github.com/dh-kam/kakao-bot/pkg/kakao"
 )
 
@@ -14,17 +15,52 @@ type AppConfig struct {
 	ClientSecret string
 	RedirectURI  string
 	TokenPath    string
+
+	AIProvider     string
+	AIAPIKey       string
+	AIBaseURL      string
+	AIModel        string
+	AISystemPrompt string
 }
 
 // Load loads configuration from .env file and environment variables with sensible defaults.
 func Load() *AppConfig {
 	loadDotEnv(".env")
 
+	aiKey := os.Getenv("AI_API_KEY")
+	if aiKey == "" {
+		if k := os.Getenv("OPENAI_API_KEY"); k != "" {
+			aiKey = k
+		} else if k := os.Getenv("GEMINI_API_KEY"); k != "" {
+			aiKey = k
+		} else if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+			aiKey = k
+		}
+	}
+
+	aiProvider := os.Getenv("AI_PROVIDER")
+	if aiProvider == "" {
+		if os.Getenv("GEMINI_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") == "" {
+			aiProvider = "gemini"
+		} else if os.Getenv("ANTHROPIC_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") == "" {
+			aiProvider = "claude"
+		} else if aiKey != "" {
+			aiProvider = "openai"
+		} else {
+			aiProvider = "mock"
+		}
+	}
+
 	cfg := &AppConfig{
-		ClientID:     os.Getenv("KAKAO_REST_API_KEY"),
-		ClientSecret: os.Getenv("KAKAO_CLIENT_SECRET"),
-		RedirectURI:  os.Getenv("KAKAO_REDIRECT_URI"),
-		TokenPath:    os.Getenv("KAKAO_TOKEN_PATH"),
+		ClientID:       os.Getenv("KAKAO_REST_API_KEY"),
+		ClientSecret:   os.Getenv("KAKAO_CLIENT_SECRET"),
+		RedirectURI:    os.Getenv("KAKAO_REDIRECT_URI"),
+		TokenPath:      os.Getenv("KAKAO_TOKEN_PATH"),
+		AIProvider:     aiProvider,
+		AIAPIKey:       aiKey,
+		AIBaseURL:      os.Getenv("AI_BASE_URL"),
+		AIModel:        os.Getenv("AI_MODEL"),
+		AISystemPrompt: os.Getenv("AI_SYSTEM_PROMPT"),
 	}
 
 	if cfg.RedirectURI == "" {
@@ -32,6 +68,9 @@ func Load() *AppConfig {
 	}
 	if cfg.TokenPath == "" {
 		cfg.TokenPath = kakao.DefaultTokenPath()
+	}
+	if cfg.AISystemPrompt == "" {
+		cfg.AISystemPrompt = "You are a helpful and intelligent AI assistant for the KakaoTalk channel @0xc0de1ab. Keep your responses concise, friendly, and formatted nicely for mobile chat screens."
 	}
 
 	return cfg
@@ -72,5 +111,15 @@ func (c *AppConfig) BuildKakaoClient() kakao.Client {
 		ClientSecret: c.ClientSecret,
 		RedirectURI:  c.RedirectURI,
 		TokenStore:   tokenStore,
+	})
+}
+
+// BuildAIProvider constructs an ai.Provider interface from configuration.
+func (c *AppConfig) BuildAIProvider() (ai.Provider, error) {
+	return ai.NewProvider(ai.ProviderConfig{
+		ProviderName: c.AIProvider,
+		APIKey:       c.AIAPIKey,
+		BaseURL:      c.AIBaseURL,
+		Model:        c.AIModel,
 	})
 }

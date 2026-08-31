@@ -74,7 +74,7 @@ func (uc *SendMeUseCase) Execute(ctx context.Context, req SendMeRequest) error {
 	text := req.Text
 	if text == "" || text == "-" {
 		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 || text == "-" {
+		if (stat.Mode()&os.ModeCharDevice) == 0 || text == "-" {
 			bytes, err := io.ReadAll(in)
 			if err != nil {
 				return fmt.Errorf("read text from stdin: %w", err)
@@ -169,7 +169,7 @@ func (uc *SendFriendUseCase) Execute(ctx context.Context, req SendFriendRequest)
 	text := req.Text
 	if text == "" || text == "-" {
 		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 || text == "-" {
+		if (stat.Mode()&os.ModeCharDevice) == 0 || text == "-" {
 			bytes, err := io.ReadAll(in)
 			if err != nil {
 				return fmt.Errorf("read text from stdin: %w", err)

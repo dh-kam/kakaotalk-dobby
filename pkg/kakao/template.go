@@ -28,11 +28,11 @@ type ContentObject struct {
 
 // SocialObject contains social reaction counts.
 type SocialObject struct {
-	LikeCount        int `json:"like_count,omitempty"`
-	CommentCount     int `json:"comment_count,omitempty"`
-	SharedCount      int `json:"shared_count,omitempty"`
-	ViewCount        int `json:"view_count,omitempty"`
-	SubscriberCount  int `json:"subscriber_count,omitempty"`
+	LikeCount       int `json:"like_count,omitempty"`
+	CommentCount    int `json:"comment_count,omitempty"`
+	SharedCount     int `json:"shared_count,omitempty"`
+	ViewCount       int `json:"view_count,omitempty"`
+	SubscriberCount int `json:"subscriber_count,omitempty"`
 }
 
 // CommerceObject contains price and product discount details.
@@ -54,14 +54,14 @@ type ItemInfo struct {
 
 // ItemContentObject represents supplementary itemized content in feed or list.
 type ItemContentObject struct {
-	ProfileText         string     `json:"profile_text,omitempty"`
-	ProfileImageURL     string     `json:"profile_image_url,omitempty"`
-	TitleImageURL       string     `json:"title_image_url,omitempty"`
-	TitleImageText      string     `json:"title_image_text,omitempty"`
-	TitleImageCategory  string     `json:"title_image_category,omitempty"`
-	Items               []ItemInfo `json:"items,omitempty"`
-	Sum                 string     `json:"sum,omitempty"`
-	SumOp               string     `json:"sum_op,omitempty"`
+	ProfileText        string     `json:"profile_text,omitempty"`
+	ProfileImageURL    string     `json:"profile_image_url,omitempty"`
+	TitleImageURL      string     `json:"title_image_url,omitempty"`
+	TitleImageText     string     `json:"title_image_text,omitempty"`
+	TitleImageCategory string     `json:"title_image_category,omitempty"`
+	Items              []ItemInfo `json:"items,omitempty"`
+	Sum                string     `json:"sum,omitempty"`
+	SumOp              string     `json:"sum_op,omitempty"`
 }
 
 // TextTemplate represents the Kakao text message template.

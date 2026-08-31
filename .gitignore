@@ -16,6 +16,9 @@ kakaobot
 # Dependency directories
 vendor/
 
+# Local env / credentials
+.env
+
 # Local token / credentials file
 tokens.json
 .config/

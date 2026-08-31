@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/dh-kam/kakao-bot/pkg/kakao"
 )
+
+// maxRequestBodyBytes caps incoming webhook payloads to block memory exhaustion.
+const maxRequestBodyBytes = 1 << 20
 
 // ServeRequest holds options for starting the webhook relay server.
 type ServeRequest struct {
@@ -70,14 +74,20 @@ func (uc *ServeUseCase) Execute(ctx context.Context, req ServeRequest) error {
 
 		if req.SecretToken != "" {
 			authHeader := r.Header.Get("X-Webhook-Token")
-			if authHeader != req.SecretToken {
+			if subtle.ConstantTimeCompare([]byte(authHeader), []byte(req.SecretToken)) != 1 {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "Failed to read body", http.StatusBadRequest)
 			return
 		}

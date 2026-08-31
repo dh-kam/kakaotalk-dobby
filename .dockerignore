@@ -1,0 +1,22 @@
+# VCS
+.git
+.gitignore
+
+# Local secrets and credentials
+.env
+tokens.json
+.config/
+
+# Build artifacts
+build/
+*.exe
+*.test
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Docs and IDE
+*.md
+.vscode/
+.idea/

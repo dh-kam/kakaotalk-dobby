@@ -12,17 +12,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dh-kam/kakao-bot/pkg/ai"
 	"github.com/dh-kam/kakao-bot/pkg/openbuilder"
 )
 
 // SkillServeRequest holds options for the OpenBuilder Skill Server.
 type SkillServeRequest struct {
-	ListenAddr string
-	ChannelID  string
-	Out        io.Writer
+	ListenAddr   string
+	ChannelID    string
+	AIProvider   ai.Provider
+	SystemPrompt string
+	Out          io.Writer
 }
 
-// SkillServeUseCase runs the HTTP skill webhook server.
+// SkillServeUseCase runs the HTTP skill webhook server with AI integration.
 type SkillServeUseCase struct{}
 
 func NewSkillServeUseCase() *SkillServeUseCase {
@@ -39,6 +42,9 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 	if req.ChannelID == "" {
 		req.ChannelID = "0xc0de1ab"
+	}
+	if req.AIProvider == nil {
+		req.AIProvider = ai.NewMockProvider("default")
 	}
 
 	mux := http.NewServeMux()
@@ -70,7 +76,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 		utterance := strings.TrimSpace(payload.UserRequest.Utterance)
 		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", payload.UserRequest.User.ID, utterance)
 
-		response := processUtterance(utterance, req.ChannelID)
+		response := processUtterance(r.Context(), utterance, req.ChannelID, req.AIProvider, req.SystemPrompt)
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -91,6 +97,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
+	fmt.Fprintf(out, "  - AI Provider:  %s\n", req.AIProvider.Name())
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -110,13 +117,13 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(utterance, channelID string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, channelID string, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
 	text := strings.ToLower(utterance)
 
 	switch {
 	case text == "도움말" || text == "help" || text == "?":
 		resp := openbuilder.NewSimpleTextResponse(
-			"🤖 안녕하세요! 0xc0de1ab 챗봇입니다.\n\n사용 가능한 명령어:\n- 💬 상태: 서버 상태 및 가동 시간 확인\n- ⏰ 시간: 서버 현재 시각 확인\n- 🏓 핑: 응답 테스트 (Ping-Pong)\n- ℹ️ 채널: 채널 정보 및 링크",
+			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n사용 가능한 명령어:\n- 💬 상태: 서버 상태 및 가동 시간 확인\n- ⏰ 시간: 서버 현재 시각 확인\n- 🏓 핑: 응답 테스트 (Ping-Pong)\n- ℹ️ 채널: 채널 정보 및 링크\n\n💡 원하는 질문을 자유롭게 입력하시면 AI가 직접 답변해 드립니다!",
 		)
 		resp.AddQuickReply("서버 상태", "상태")
 		resp.AddQuickReply("현재 시간", "시간")
@@ -152,8 +159,8 @@ func processUtterance(utterance, channelID string) *openbuilder.SkillResponse {
 
 	case strings.Contains(text, "채널") || strings.Contains(text, "정보") || strings.Contains(text, channelID):
 		resp := openbuilder.NewBasicCardResponse(
-			fmt.Sprintf("🔬 0xc0de1ab Kakao Chatbot"),
-			"카카오톡 채널 @0xc0de1ab 공식 챗봇 스킬 서버입니다.",
+			fmt.Sprintf("🔬 0xc0de1ab Kakao AI Chatbot"),
+			"카카오톡 채널 @0xc0de1ab AI 연동 공식 챗봇 스킬 서버입니다.",
 			"",
 			openbuilder.NewWebButton("개발 블로그 / Outline", "https://outline.0xc0de1ab.dev"),
 			openbuilder.NewMessageButton("명령어 보기", "도움말"),
@@ -161,12 +168,33 @@ func processUtterance(utterance, channelID string) *openbuilder.SkillResponse {
 		return resp
 
 	default:
-		resp := openbuilder.NewSimpleTextResponse(
-			fmt.Sprintf("📩 \"%s\" 메시지를 수신했습니다!\n\n아래 빠른 메뉴를 이용하시거나 '도움말'을 입력해 보세요.", utterance),
-		)
-		resp.AddQuickReply("서버 상태", "상태")
-		resp.AddQuickReply("현재 시간", "시간")
+		// Forward to AI Provider with 3.5s timeout to guarantee safety under Kakao 5s limit
+		aiCtx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
+		defer cancel()
+
+		aiResp, err := aiProvider.GenerateResponse(aiCtx, ai.CompletionRequest{
+			SystemPrompt: systemPrompt,
+			Messages: []ai.ChatMessage{
+				{Role: "user", Content: utterance},
+			},
+		})
+
+		if err != nil {
+			resp := openbuilder.NewSimpleTextResponse(
+				fmt.Sprintf("⚠️ AI 응답 생성 중 오류가 발생했습니다: %v\n\n잠시 후 다시 시도해 주세요.", err),
+			)
+			resp.AddQuickReply("도움말", "도움말")
+			return resp
+		}
+
+		replyText := strings.TrimSpace(aiResp.Text)
+		if replyText == "" {
+			replyText = "답변을 생성하지 못했습니다."
+		}
+
+		resp := openbuilder.NewSimpleTextResponse(replyText)
 		resp.AddQuickReply("도움말", "도움말")
+		resp.AddQuickReply("서버 상태", "상태")
 		return resp
 	}
 }

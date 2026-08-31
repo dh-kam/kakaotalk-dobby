@@ -73,11 +73,11 @@ type KakaoAccount struct {
 
 // KakaoProfile represents user profile details.
 type KakaoProfile struct {
-	Nickname             string `json:"nickname"`
-	ThumbnailImageURL    string `json:"thumbnail_image_url,omitempty"`
-	ProfileImageURL      string `json:"profile_image_url,omitempty"`
-	IsDefaultImage       bool   `json:"is_default_image"`
-	IsDefaultNickname    bool   `json:"is_default_nickname"`
+	Nickname          string `json:"nickname"`
+	ThumbnailImageURL string `json:"thumbnail_image_url,omitempty"`
+	ProfileImageURL   string `json:"profile_image_url,omitempty"`
+	IsDefaultImage    bool   `json:"is_default_image"`
+	IsDefaultNickname bool   `json:"is_default_nickname"`
 }
 
 // ShippingAddressesResponse represents response from /v1/user/shipping_address.
@@ -154,12 +154,12 @@ type ImageInfos struct {
 
 // ImageDetail contains image properties.
 type ImageDetail struct {
-	URL      string `json:"url"`
-	Length   int64  `json:"length"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	Format   string `json:"content_type"`
-	Expires  int64  `json:"expires_at"`
+	URL     string `json:"url"`
+	Length  int64  `json:"length"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Format  string `json:"content_type"`
+	Expires int64  `json:"expires_at"`
 }
 
 // TextMessageRequest is a helper request struct for sending simple text messages.

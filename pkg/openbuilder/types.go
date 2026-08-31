@@ -39,11 +39,11 @@ type Bot struct {
 
 // Action contains matched action and extracted parameters.
 type Action struct {
-	Name           string                 `json:"name"`
-	ID             string                 `json:"id"`
-	Params         map[string]string      `json:"params,omitempty"`
-	DetailParams   map[string]interface{} `json:"detailParams,omitempty"`
-	ClientExtra    map[string]interface{} `json:"clientExtra,omitempty"`
+	Name         string                 `json:"name"`
+	ID           string                 `json:"id"`
+	Params       map[string]string      `json:"params,omitempty"`
+	DetailParams map[string]interface{} `json:"detailParams,omitempty"`
+	ClientExtra  map[string]interface{} `json:"clientExtra,omitempty"`
 }
 
 // Context represents context state passed from OpenBuilder.
@@ -55,11 +55,11 @@ type Context struct {
 
 // SkillResponse is the response format expected by Kakao i OpenBuilder (v2.0).
 type SkillResponse struct {
-	Version      string        `json:"version"`
-	Template     SkillTemplate `json:"template"`
-	Context      *SkillContext `json:"context,omitempty"`
-	Data         interface{}   `json:"data,omitempty"`
-	UseCallback  bool          `json:"useCallback,omitempty"`
+	Version     string        `json:"version"`
+	Template    SkillTemplate `json:"template"`
+	Context     *SkillContext `json:"context,omitempty"`
+	Data        interface{}   `json:"data,omitempty"`
+	UseCallback bool          `json:"useCallback,omitempty"`
 }
 
 // SkillTemplate contains UI output components.
@@ -91,23 +91,23 @@ type SimpleImage struct {
 
 // BasicCard represents card with thumbnail, title, description, and buttons.
 type BasicCard struct {
-	Title       string        `json:"title,omitempty"`
-	Description string        `json:"description,omitempty"`
-	Thumbnail   *Thumbnail    `json:"thumbnail,omitempty"`
-	Buttons     []CardButton  `json:"buttons,omitempty"`
+	Title       string       `json:"title,omitempty"`
+	Description string       `json:"description,omitempty"`
+	Thumbnail   *Thumbnail   `json:"thumbnail,omitempty"`
+	Buttons     []CardButton `json:"buttons,omitempty"`
 }
 
 // CommerceCard represents product card with price and discount.
 type CommerceCard struct {
-	Title         string       `json:"title"`
-	Description   string       `json:"description,omitempty"`
-	Price         int          `json:"price"`
-	Currency      string       `json:"currency,omitempty"`
-	Discount      int          `json:"discount,omitempty"`
-	DiscountRate  int          `json:"discountRate,omitempty"`
-	DiscountedPrice int        `json:"discountedPrice,omitempty"`
-	Thumbnails    []Thumbnail  `json:"thumbnails"`
-	Buttons       []CardButton `json:"buttons"`
+	Title           string       `json:"title"`
+	Description     string       `json:"description,omitempty"`
+	Price           int          `json:"price"`
+	Currency        string       `json:"currency,omitempty"`
+	Discount        int          `json:"discount,omitempty"`
+	DiscountRate    int          `json:"discountRate,omitempty"`
+	DiscountedPrice int          `json:"discountedPrice,omitempty"`
+	Thumbnails      []Thumbnail  `json:"thumbnails"`
+	Buttons         []CardButton `json:"buttons"`
 }
 
 // ListCard represents structured list items.
@@ -124,10 +124,10 @@ type ListHeader struct {
 
 // ListItem is an item entry inside ListCard.
 type ListItem struct {
-	Title       string     `json:"title"`
-	Description string     `json:"description,omitempty"`
-	ImageURL    string     `json:"imageUrl,omitempty"`
-	Link        *Link      `json:"link,omitempty"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	ImageURL    string `json:"imageUrl,omitempty"`
+	Link        *Link  `json:"link,omitempty"`
 }
 
 // Carousel represents horizontal scrollable card list.
@@ -138,11 +138,11 @@ type Carousel struct {
 
 // Thumbnail represents image in cards.
 type Thumbnail struct {
-	ImageURL string `json:"imageUrl"`
-	Link     *Link  `json:"link,omitempty"`
-	FixedRatio bool `json:"fixedRatio,omitempty"`
-	Width    int    `json:"width,omitempty"`
-	Height   int    `json:"height,omitempty"`
+	ImageURL   string `json:"imageUrl"`
+	Link       *Link  `json:"link,omitempty"`
+	FixedRatio bool   `json:"fixedRatio,omitempty"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
 }
 
 // CardButton represents action button in cards.
@@ -167,10 +167,10 @@ type QuickReply struct {
 
 // Link represents link target.
 type Link struct {
-	Web string `json:"web,omitempty"`
-	Mobile string `json:"mobile,omitempty"`
+	Web     string `json:"web,omitempty"`
+	Mobile  string `json:"mobile,omitempty"`
 	Android string `json:"android,omitempty"`
-	IOS string `json:"ios,omitempty"`
+	IOS     string `json:"ios,omitempty"`
 }
 
 // SkillContext contains context values to be preserved.

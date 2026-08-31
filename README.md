@@ -51,6 +51,54 @@ make clean
 
 Artifacts are produced in `build/<os>-<arch>/<variant>/kakaobot`.
 
+## Docker
+
+The `Dockerfile` builds a statically linked release binary (with version
+metadata injected from git) and packages it into a minimal Alpine image that
+runs as a non-root user and exposes the webhook server on port 8080 with a
+`HEALTHCHECK` on `/healthz`. `tools/manage.sh` automates builds and pushes to
+a private repository in the Oracle Cloud Infrastructure Registry (OCIR).
+
+Registry configuration (export or place in `.env`):
+
+```dotenv
+OCI_REGION=ap-seoul-1
+OCI_TENANCY_NAMESPACE=your-tenancy-namespace
+OCI_USERNAME=oracleidentitycloudservice/you@example.com
+OCI_AUTH_TOKEN=your-oci-auth-token
+IMAGE_REPOSITORY=kakao-bot
+```
+
+```bash
+# Authenticate to OCIR (auth token, not the account password)
+./tools/manage.sh login
+
+# Build the image locally; tag defaults to `git describe --tags --always`
+./tools/manage.sh build
+
+# Build and push :<tag> and :latest
+./tools/manage.sh push
+
+# Multi-arch manifest push
+PLATFORMS=linux/amd64,linux/arm64 ./tools/manage.sh push
+```
+
+Run the webhook relay server:
+
+```bash
+docker run -d --name kakao-bot \
+  -p 8080:8080 \
+  -e KAKAO_REST_API_KEY=your_rest_api_key \
+  -v kakao-bot-config:/home/kakaobot/.config/kakao-bot \
+  ap-seoul-1.ocir.io/your-tenancy-namespace/kakao-bot:latest
+```
+
+Kakao credentials (`KAKAO_REST_API_KEY`, `KAKAO_CLIENT_SECRET`) are read from
+the environment. OAuth tokens are persisted under
+`/home/kakaobot/.config/kakao-bot`, so mount a volume there to keep sessions
+across restarts. Additional `serve` flags such as `--secret-token` can be
+appended to the `docker run` arguments.
+
 ## Configuration
 
 Credentials can be provided via environment variables or a local `.env` file:
@@ -145,12 +193,28 @@ curl -X POST http://localhost:8080/webhook \
   -d '{"text": "Server alert from Prometheus"}'
 ```
 
-### Chatbot Skill Server (`skill`)
+### Chatbot Skill Server with AI (`skill`)
 
-Starts a Kakao i OpenBuilder skill webhook server for channel `@0xc0de1ab`:
+Starts a Kakao i OpenBuilder skill webhook server for channel `@0xc0de1ab` with pluggable AI LLM integration (OpenAI, Gemini, Claude, Ollama, Groq, DeepSeek, Mock):
 
 ```bash
-kakaobot skill serve --listen ":8080" --channel-id "0xc0de1ab"
+# Run with OpenAI (or any OpenAI-compatible provider)
+kakaobot skill serve --listen ":8080" \
+  --ai-provider "openai" \
+  --ai-api-key "sk-..." \
+  --ai-model "gpt-4o-mini"
+
+# Run with Google Gemini
+kakaobot skill serve --listen ":8080" \
+  --ai-provider "gemini" \
+  --ai-api-key "AIza..." \
+  --ai-model "gemini-1.5-flash"
+
+# Run with local Ollama
+kakaobot skill serve --listen ":8080" \
+  --ai-provider "ollama" \
+  --ai-base-url "http://localhost:11434/v1" \
+  --ai-model "llama3"
 ```
 
 ## Go Library Usage
