@@ -300,17 +300,44 @@ func isBusQuery(text string) bool {
 }
 
 func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {
-	locations := []string{
-		"우미린2차", "우미린 2차", "우미린1차", "우미린 1차", "우미린",
-		"해마루초", "이편한", "중흥1차", "중흥 1차", "중흥",
-		"현진 103동", "현진 108동", "현진 남문", "현진",
-		"양포도서관", "양포", "호반베르디움", "호반", "원당초", "원당",
+	aliasMap := map[string]string{
+		"우미린더스카이": "우미린2차",
+		"더스카이":   "우미린2차",
+		"센트럴파크":  "우미린2차",
+		"풀하우스":   "우미린1차",
+		"우미린 2차": "우미린2차",
+		"우미린2차":  "우미린2차",
+		"우미린 1차": "우미린1차",
+		"우미린1차":  "우미린1차",
+		"우미린":    "우미린",
+		"해마루초":   "해마루초",
+		"해마루":    "해마루초",
+		"이편한":    "이편한",
+		"중흥1차":   "중흥1차",
+		"중흥 1차":  "중흥1차",
+		"중흥":     "중흥",
+		"현진 103동": "현진 103동",
+		"현진 108동": "현진 108동",
+		"현진 남문":  "현진 남문",
+		"현진":     "현진",
+		"양포도서관":  "양포도서관",
+		"양포":     "양포도서관",
+		"호반베르디움": "호반",
+		"호반":     "호반",
+		"원당초":    "원당초",
+		"원당":     "원당초",
 	}
 
 	var matchedLoc string
-	for _, loc := range locations {
-		if strings.Contains(text, strings.ToLower(loc)) {
-			matchedLoc = loc
+	var displayLocName string
+	for kw, canonical := range aliasMap {
+		if strings.Contains(text, kw) {
+			matchedLoc = canonical
+			if kw == "우미린더스카이" || kw == "더스카이" {
+				displayLocName = "우미린 2차 (더스카이)"
+			} else {
+				displayLocName = canonical
+			}
 			break
 		}
 	}
@@ -326,12 +353,38 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 
 	first := matches[0]
 
-	// Build native ItemList for ItemCard
+	// Build compact, beautiful ItemList for ItemCard (Never truncated)
 	var items []openbuilder.ItemCardItem
 	for _, m := range matches {
+		locLabel := m.Location
+		locLabel = strings.TrimSuffix(locLabel, " 승강장")
+		locLabel = strings.TrimSuffix(locLabel, "승강장")
+
 		for cls, tm := range m.Times {
+			clsShort := cls
+			if strings.Contains(cls, "3시 40분") {
+				clsShort = "3:40"
+			} else if strings.Contains(cls, "5시 20분") {
+				clsShort = "5:20"
+			} else {
+				clsShort = strings.TrimSuffix(clsShort, " 수업")
+			}
+
+			var title string
+			if matchedLoc != "" && strings.Contains(locLabel, matchedLoc) && (strings.Contains(locLabel, "정문") || strings.Contains(locLabel, "후문")) {
+				if strings.Contains(locLabel, "후문") {
+					title = fmt.Sprintf("후문 (%s)", clsShort)
+				} else if strings.Contains(locLabel, "정문") {
+					title = fmt.Sprintf("정문 (%s)", clsShort)
+				} else {
+					title = fmt.Sprintf("%s (%s)", locLabel, clsShort)
+				}
+			} else {
+				title = fmt.Sprintf("%s (%s)", locLabel, clsShort)
+			}
+
 			items = append(items, openbuilder.ItemCardItem{
-				Title:       fmt.Sprintf("%s (%s)", m.Location, cls),
+				Title:       title,
 				Description: tm,
 			})
 		}
@@ -345,10 +398,15 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 	phoneClean := strings.ReplaceAll(first.Contact, "-", "")
 	phoneClean = strings.ReplaceAll(phoneClean, " ", "")
 
+	cardDesc := fmt.Sprintf("%s 시간표 안내", first.ScheduleType)
+	if displayLocName != "" {
+		cardDesc = fmt.Sprintf("%s • %s 시간표", displayLocName, first.ScheduleType)
+	}
+
 	card := &openbuilder.ItemCard{
 		ImageTitle: &openbuilder.ItemCardImageTitle{
 			Title:       fmt.Sprintf("%s %s", first.AcademyName, first.VehicleNumber),
-			Description: fmt.Sprintf("%s 시간표 안내", first.ScheduleType),
+			Description: cardDesc,
 		},
 		Title:             "승강장별 탑승 시각",
 		Description:       "• 표기된 시각 3분 전까지 승강장에 대기해 주세요.",
