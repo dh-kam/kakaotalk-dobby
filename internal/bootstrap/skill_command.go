@@ -125,6 +125,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "⚠️ Failed to init Vertex provider: %v\n", err)
 				} else {
 					registry := agent.NewToolRegistry()
+					registry.Register(&agent.CurrentTimeTool{})
 					registry.Register(&agent.ServerStatusTool{})
 					registry.Register(agent.NewBusScheduleTool(busSvc))
 					registry.Register(agent.NewScheduleNotificationTool(schedEngine))
@@ -137,7 +138,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 						Provider: vProvider,
 						Tools:    registry,
 						SystemPrompt: `You are a helpful, polite KakaoTalk AI assistant for channel @0xc0de1ab.
-You have access to tools for looking up academy bus schedules, managing notifications/reminders, and checking server status.
+You have access to tools for checking current time (get_current_time in KST), looking up academy bus schedules, managing notifications/reminders, and checking server status.
 Always answer politely, naturally, and concisely in Korean formatted for mobile screens.
 
 Domain Knowledge:

@@ -64,6 +64,7 @@ func (uc *AgentRunUseCase) Execute(ctx context.Context, req AgentRunRequest) err
 
 	// Setup tools
 	registry := agent.NewToolRegistry()
+	registry.Register(&agent.CurrentTimeTool{})
 	registry.Register(&agent.ServerStatusTool{})
 
 	busSvc := academy.NewService()

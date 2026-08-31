@@ -361,7 +361,11 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 	}
 
 	for _, m := range matches {
-		sb.WriteString(fmt.Sprintf("📍 %s\n", m.Location))
+		locHeader := fmt.Sprintf("📍 %s", m.Location)
+		if m.Highlighted {
+			locHeader += " ⭐"
+		}
+		sb.WriteString(locHeader + "\n")
 
 		// Sort class times for consistent presentation
 		var classKeys []string
@@ -372,11 +376,11 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 
 		for _, cls := range classKeys {
 			tm := m.Times[cls]
-			note := ""
 			if m.Highlighted && strings.Contains(cls, "3시 40분") {
-				note = " (강조)"
+				sb.WriteString(fmt.Sprintf("  👉 %s: %s 📌 (추천 탑승)\n", cls, tm))
+			} else {
+				sb.WriteString(fmt.Sprintf("  • %s: %s\n", cls, tm))
 			}
-			sb.WriteString(fmt.Sprintf("  • %s: %s%s\n", cls, tm, note))
 		}
 		sb.WriteString("\n")
 	}
