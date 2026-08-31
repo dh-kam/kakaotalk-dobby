@@ -140,7 +140,7 @@ func (p *vertexSDKProvider) GenerateWithTools(ctx context.Context, req ToolCompl
 		}
 
 		if m.Role == "tool" {
-			role = "user"
+			role = "tool"
 			var respMap map[string]any
 			if err := json.Unmarshal([]byte(m.Content), &respMap); err != nil {
 				respMap = map[string]any{"output": m.Content}
