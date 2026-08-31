@@ -12,7 +12,7 @@ import (
 
 func TestVertexProvider_GenerateWithTools(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "Bearer gcp-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "test-api-key", r.Header.Get("x-goog-api-key"))
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		w.Header().Set("Content-Type", "application/json")
@@ -42,8 +42,8 @@ func TestVertexProvider_GenerateWithTools(t *testing.T) {
 	provider := NewVertexProvider(VertexConfig{
 		Project:       "my-gcp-project",
 		Location:      "us-central1",
-		Model:         "gemini-1.5-flash",
-		BearerToken:   "gcp-token",
+		Model:         "gemini-3.7-flash",
+		APIKey:        "test-api-key",
 		CustomBaseURL: ts.URL,
 	})
 

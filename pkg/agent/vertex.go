@@ -1,26 +1,24 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/samber/lo"
+	"google.golang.org/genai"
 )
 
-type vertexProvider struct {
-	project      string
-	location     string
-	model        string
-	bearerToken  string
-	apiKey       string
+type vertexSDKProvider struct {
+	project       string
+	location      string
+	model         string
+	apiKey        string
+	bearerToken   string
 	customBaseURL string
-	httpClient   *http.Client
+	httpClient    *http.Client
+	client        *genai.Client
 }
 
 // VertexConfig holds configuration for Google Cloud Vertex AI.
@@ -34,7 +32,7 @@ type VertexConfig struct {
 	HTTPClient    *http.Client
 }
 
-// NewVertexProvider creates a new Google Vertex AI Provider.
+// NewVertexProvider creates a new Google Vertex AI Provider using official google.golang.org/genai SDK.
 func NewVertexProvider(cfg VertexConfig) LLMProvider {
 	project := cfg.Project
 	if project == "" {
@@ -48,26 +46,52 @@ func NewVertexProvider(cfg VertexConfig) LLMProvider {
 	if model == "" {
 		model = "gemini-3.7-flash"
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	return &vertexProvider{
+
+	return &vertexSDKProvider{
 		project:       project,
 		location:      loc,
 		model:         model,
-		bearerToken:   cfg.BearerToken,
 		apiKey:        cfg.APIKey,
+		bearerToken:   cfg.BearerToken,
 		customBaseURL: cfg.CustomBaseURL,
-		httpClient:    client,
+		httpClient:    cfg.HTTPClient,
 	}
 }
 
-func (p *vertexProvider) Name() string {
+func (p *vertexSDKProvider) Name() string {
 	return "vertex"
 }
 
-func (p *vertexProvider) Generate(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+func (p *vertexSDKProvider) getClient(ctx context.Context) (*genai.Client, error) {
+	if p.client != nil {
+		return p.client, nil
+	}
+
+	backend := genai.BackendVertexAI
+	if p.project == "" {
+		backend = genai.BackendGeminiAPI
+	}
+
+	clientCfg := &genai.ClientConfig{
+		APIKey:     p.apiKey,
+		Project:    p.project,
+		Location:   p.location,
+		Backend:    backend,
+		HTTPClient: p.httpClient,
+	}
+	if p.customBaseURL != "" {
+		clientCfg.HTTPOptions.BaseURL = p.customBaseURL
+	}
+
+	client, err := genai.NewClient(ctx, clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("init google genai client: %w", err)
+	}
+	p.client = client
+	return p.client, nil
+}
+
+func (p *vertexSDKProvider) Generate(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	toolReq := ToolCompletionRequest{
 		CompletionRequest: req,
 	}
@@ -82,8 +106,13 @@ func (p *vertexProvider) Generate(ctx context.Context, req CompletionRequest) (*
 	}, nil
 }
 
-func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompletionRequest) (*ToolCompletionResponse, error) {
-	contents := make([]map[string]interface{}, 0, len(req.Messages))
+func (p *vertexSDKProvider) GenerateWithTools(ctx context.Context, req ToolCompletionRequest) (*ToolCompletionResponse, error) {
+	client, err := p.getClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var contents []*genai.Content
 
 	for _, m := range req.Messages {
 		role := m.Role
@@ -91,161 +120,97 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 			role = "model"
 		}
 
-		parts := make([]map[string]interface{}, 0)
+		var parts []*genai.Part
 
-		if m.Content != "" {
-			parts = append(parts, map[string]interface{}{"text": m.Content})
+		if m.Content != "" && m.Role != "tool" {
+			parts = append(parts, genai.NewPartFromText(m.Content))
 		}
 
 		for _, tc := range m.ToolCalls {
-			var argsMap map[string]interface{}
+			var argsMap map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &argsMap); err != nil {
-				argsMap = map[string]interface{}{"raw_args": tc.Arguments}
+				argsMap = map[string]any{"raw_args": tc.Arguments}
 			}
-			partMap := map[string]interface{}{
-				"functionCall": map[string]interface{}{
-					"name": tc.Name,
-					"args": argsMap,
-				},
-			}
+			p := genai.NewPartFromFunctionCall(tc.Name, argsMap)
 			if tc.ThoughtSignature != "" {
-				partMap["thoughtSignature"] = tc.ThoughtSignature
+				p.ThoughtSignature = []byte(tc.ThoughtSignature)
 			}
-			parts = append(parts, partMap)
+			parts = append(parts, p)
 		}
 
 		if m.Role == "tool" {
 			role = "user"
-			parts = []map[string]interface{}{
-				{
-					"functionResponse": map[string]interface{}{
-						"name": m.Name,
-						"response": map[string]interface{}{
-							"content": m.Content,
-						},
-					},
-				},
+			var respMap map[string]any
+			if err := json.Unmarshal([]byte(m.Content), &respMap); err != nil {
+				respMap = map[string]any{"output": m.Content}
 			}
+			parts = append(parts, genai.NewPartFromFunctionResponse(m.Name, respMap))
 		}
 
 		if len(parts) > 0 {
-			contents = append(contents, map[string]interface{}{
-				"role":  role,
-				"parts": parts,
+			contents = append(contents, &genai.Content{
+				Role:  role,
+				Parts: parts,
 			})
 		}
 	}
 
-	payload := map[string]interface{}{
-		"contents": contents,
-	}
+	genConfig := &genai.GenerateContentConfig{}
 
 	if req.SystemPrompt != "" {
-		payload["systemInstruction"] = map[string]interface{}{
-			"parts": []map[string]interface{}{
-				{"text": req.SystemPrompt},
-			},
+		genConfig.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{genai.NewPartFromText(req.SystemPrompt)},
 		}
 	}
 
 	if len(req.Tools) > 0 {
-		declarations := lo.Map(req.Tools, func(t ToolDefinition, _ int) map[string]interface{} {
-			decl := map[string]interface{}{
-				"name":        t.Name,
-				"description": t.Description,
+		var decls []*genai.FunctionDeclaration
+		for _, t := range req.Tools {
+			decl := &genai.FunctionDeclaration{
+				Name:                 t.Name,
+				Description:          t.Description,
+				ParametersJsonSchema: t.Parameters,
 			}
-			if len(t.Parameters) > 0 {
-				decl["parameters"] = t.Parameters
-			}
-			return decl
-		})
-
-		payload["tools"] = []map[string]interface{}{
-			{"functionDeclarations": declarations},
+			decls = append(decls, decl)
+		}
+		genConfig.Tools = []*genai.Tool{
+			{FunctionDeclarations: decls},
 		}
 	}
 
-	reqBytes, err := json.Marshal(payload)
+	resp, err := client.Models.GenerateContent(ctx, p.model, contents, genConfig)
 	if err != nil {
-		return nil, fmt.Errorf("marshal vertex request: %w", err)
+		return nil, fmt.Errorf("vertex genai generate: %w", err)
 	}
 
-	endpoint := p.buildEndpoint()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, fmt.Errorf("create vertex request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	if p.bearerToken != "" {
-		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.bearerToken))
-	}
-	if p.apiKey != "" {
-		httpReq.Header.Set("x-goog-api-key", p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("execute vertex request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read vertex response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("vertex request failed (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var vertexResp struct {
-		Candidates []struct {
-			Content struct {
-				Role  string `json:"role"`
-				Parts []struct {
-					Text             string `json:"text,omitempty"`
-					ThoughtSignature string `json:"thoughtSignature,omitempty"`
-					FunctionCall     *struct {
-						Name string                 `json:"name"`
-						Args map[string]interface{} `json:"args"`
-					} `json:"functionCall,omitempty"`
-				} `json:"parts"`
-			} `json:"content"`
-			FinishReason string `json:"finishReason"`
-		} `json:"candidates"`
-		UsageMetadata struct {
-			PromptTokenCount     int `json:"promptTokenCount"`
-			CandidatesTokenCount int `json:"candidatesTokenCount"`
-			TotalTokenCount      int `json:"totalTokenCount"`
-		} `json:"usageMetadata"`
-	}
-
-	if err := json.Unmarshal(respBody, &vertexResp); err != nil {
-		return nil, fmt.Errorf("unmarshal vertex response: %w", err)
-	}
-
-	if len(vertexResp.Candidates) == 0 {
-		return nil, fmt.Errorf("no response candidates from vertex ai")
-	}
-
-	candidate := vertexResp.Candidates[0]
 	var textParts []string
 	var toolCalls []ToolCall
 
-	for i, part := range candidate.Content.Parts {
-		if part.Text != "" {
-			textParts = append(textParts, part.Text)
+	for _, cand := range resp.Candidates {
+		if cand.Content == nil {
+			continue
 		}
-		if part.FunctionCall != nil {
-			argsBytes, _ := json.Marshal(part.FunctionCall.Args)
-			toolCalls = append(toolCalls, ToolCall{
-				ID:               fmt.Sprintf("call_%d_%s", i, part.FunctionCall.Name),
-				Name:             part.FunctionCall.Name,
-				Arguments:        string(argsBytes),
-				ThoughtSignature: part.ThoughtSignature,
-			})
+		for i, part := range cand.Content.Parts {
+			if part.Text != "" {
+				textParts = append(textParts, part.Text)
+			}
+			if part.FunctionCall != nil {
+				argsBytes, _ := json.Marshal(part.FunctionCall.Args)
+				toolCalls = append(toolCalls, ToolCall{
+					ID:               fmt.Sprintf("call_%d_%s", i, part.FunctionCall.Name),
+					Name:             part.FunctionCall.Name,
+					Arguments:        string(argsBytes),
+					ThoughtSignature: string(part.ThoughtSignature),
+				})
+			}
 		}
+	}
+
+	var inputTokens, outputTokens, totalTokens int
+	if resp.UsageMetadata != nil {
+		inputTokens = int(resp.UsageMetadata.PromptTokenCount)
+		outputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+		totalTokens = int(resp.UsageMetadata.TotalTokenCount)
 	}
 
 	return &ToolCompletionResponse{
@@ -253,21 +218,9 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 		ToolCalls: toolCalls,
 		Model:     p.model,
 		Usage: TokenUsage{
-			InputTokens:  vertexResp.UsageMetadata.PromptTokenCount,
-			OutputTokens: vertexResp.UsageMetadata.CandidatesTokenCount,
-			TotalTokens:  vertexResp.UsageMetadata.TotalTokenCount,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			TotalTokens:  totalTokens,
 		},
 	}, nil
-}
-
-func (p *vertexProvider) buildEndpoint() string {
-	if p.customBaseURL != "" {
-		return p.customBaseURL
-	}
-	if p.location == "global" || p.location == "" {
-		return fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:generateContent",
-			p.project, p.model)
-	}
-	return fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:generateContent",
-		p.location, p.project, p.location, p.model)
 }

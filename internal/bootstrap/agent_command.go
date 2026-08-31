@@ -31,7 +31,7 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 
 	opts := struct {
 		Provider     string `flag:"provider" usage:"Agent LLM provider (vertex, bedrock, mock)"`
-		Model        string `flag:"model" usage:"Model ID (e.g. gemini-1.5-flash or anthropic.claude-3-5-haiku-20241022-v1:0)"`
+		Model        string `flag:"model" usage:"Model ID (defaults: gemini-3.7-flash for vertex, us.anthropic.claude-3-5-sonnet-20241022-v2:0 for bedrock)"`
 		GCPProject   string `flag:"gcp-project" usage:"Google Cloud Project ID for Vertex AI"`
 		GCPLocation  string `flag:"gcp-location" usage:"Google Cloud Location (e.g. us-central1, asia-northeast3)"`
 		GCPToken     string `flag:"gcp-token" usage:"Google Cloud OAuth2 Access Token"`
