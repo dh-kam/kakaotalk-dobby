@@ -114,9 +114,13 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			// Initialize Agent if Vertex AI or Bedrock is configured
 			var botAgent agent.Agent
 			if runtimeCfg.VertexAPIKey != "" {
+				vModel := runtimeCfg.VertexModel
+				if vModel == "" {
+					vModel = "gemini-2.5-flash"
+				}
 				vProvider, err := agent.NewLLMProvider(agent.ProviderOptions{
 					ProviderName: "vertex",
-					Model:        "gemini-3.7-flash",
+					Model:        vModel,
 					Project:      runtimeCfg.VertexProject,
 					Location:     runtimeCfg.VertexLocation,
 					APIKey:       runtimeCfg.VertexAPIKey,

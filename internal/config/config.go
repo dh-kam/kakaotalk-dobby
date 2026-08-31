@@ -25,6 +25,7 @@ type AppConfig struct {
 	VertexAPIKey       string
 	VertexProject      string
 	VertexLocation     string
+	VertexModel        string
 	BedrockBearerToken string
 	BedrockRegion      string
 }
@@ -93,6 +94,7 @@ func Load() *AppConfig {
 		VertexAPIKey:       os.Getenv("VERTEX_API_KEY"),
 		VertexProject:      vertexProject,
 		VertexLocation:     vertexLocation,
+		VertexModel:        os.Getenv("VERTEX_MODEL"),
 		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
 		BedrockRegion:      bedrockRegion,
 	}

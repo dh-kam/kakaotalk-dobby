@@ -260,8 +260,8 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 			}
 		}
 
-		// 2. Autonomous Agent or AI Provider fallback with 4.5s timeout
-		aiCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
+		// 2. Autonomous Agent or AI Provider fallback with 4.8s timeout
+		aiCtx, cancel := context.WithTimeout(ctx, 4800*time.Millisecond)
 		defer cancel()
 
 		if botAgent != nil {
