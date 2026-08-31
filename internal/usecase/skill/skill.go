@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dh-kam/kakao-bot/pkg/academy"
 	"github.com/dh-kam/kakao-bot/pkg/agent"
 	"github.com/dh-kam/kakao-bot/pkg/ai"
 	"github.com/dh-kam/kakao-bot/pkg/openbuilder"
@@ -23,6 +24,7 @@ type SkillServeRequest struct {
 	ChannelID    string
 	AIProvider   ai.Provider
 	Agent        agent.Agent
+	BusService   *academy.Service
 	SystemPrompt string
 	Out          io.Writer
 }
@@ -80,7 +82,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			utterance = payload.Action.Params["utterance"]
 		}
 
-		respPayload := processUtterance(r.Context(), utterance, req.ChannelID, req.Agent, req.AIProvider, req.SystemPrompt)
+		respPayload := processUtterance(r.Context(), utterance, req.ChannelID, req.BusService, req.Agent, req.AIProvider, req.SystemPrompt)
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -125,10 +127,18 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(ctx context.Context, utterance, channelID string, botAgent agent.Agent, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, channelID string, busSvc *academy.Service, botAgent agent.Agent, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
 	text := strings.ToLower(utterance)
 
 	switch {
+	// OpenBuilder verification ping / empty test / greeting
+	case text == "" || text == "test" || text == "테스트" || text == "스킬테스트" || text == "스킬 서버 테스트":
+		resp := openbuilder.NewSimpleTextResponse("🤖 안녕하세요! 0xc0de1ab AI 챗봇 스킬 서버가 정상 연결되었습니다.\n\n궁금한 점을 메시지로 입력해 주세요!")
+		resp.AddQuickReply("도움말", "도움말")
+		resp.AddQuickReply("서버 상태", "상태")
+		resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+		return resp
+
 	case text == "도움말" || text == "help" || text == "?":
 		resp := openbuilder.NewSimpleTextResponse(
 			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n사용 가능한 질문 예시:\n- 🚌 \"정상어학원 우미린 2차 버스 몇 시에 와?\"\n- 🚌 \"정상어학원 2호차 등원 시간표 알려줘\"\n- 💬 \"서버 상태 확인해줘\"\n- ℹ️ \"채널 정보\"\n\n💡 원하는 질문을 자유롭게 입력하시면 AI Agent가 도구를 호출하여 정확히 답변해 드립니다!",
@@ -174,8 +184,15 @@ func processUtterance(ctx context.Context, utterance, channelID string, botAgent
 		return resp
 
 	default:
-		// Forward to Autonomous Agent or AI Provider with 12s timeout
-		aiCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		// 1. Fast Path for Bus Schedule (Sub-10ms response to guarantee safety under Kakao 5s timeout)
+		if busSvc != nil && isBusQuery(text) {
+			if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
+				return resp
+			}
+		}
+
+		// 2. Autonomous Agent or AI Provider fallback with 4.5s timeout
+		aiCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
 		defer cancel()
 
 		if botAgent != nil {
@@ -211,4 +228,71 @@ func processUtterance(ctx context.Context, utterance, channelID string, botAgent
 		resp.AddQuickReply("도움말", "도움말")
 		return resp
 	}
+}
+
+func isBusQuery(text string) bool {
+	keywords := []string{"버스", "시간표", "정류장", "등원", "하원", "기사", "셔틀", "차량", "탑승", "우미린", "양포", "해마루", "현진", "이편한", "중흥", "호반", "원당", "정상어학원", "정상"}
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {
+	// Extract stop / location keyword
+	locations := []string{
+		"우미린2차", "우미린 2차", "우미린1차", "우미린 1차", "우미린",
+		"해마루초", "이편한", "중흥1차", "중흥 1차", "중흥",
+		"현진 103동", "현진 108동", "현진 남문", "현진",
+		"양포도서관", "양포", "호반베르디움", "호반", "원당초", "원당",
+	}
+
+	var matchedLoc string
+	for _, loc := range locations {
+		if strings.Contains(text, strings.ToLower(loc)) {
+			matchedLoc = loc
+			break
+		}
+	}
+
+	matches := busSvc.Search(academy.SearchQuery{
+		Academy:  "정상",
+		Location: matchedLoc,
+	})
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var sb strings.Builder
+	first := matches[0]
+	sb.WriteString(fmt.Sprintf("🚌 %s (%s %s 시간표)\n\n", first.AcademyName, first.VehicleNumber, first.ScheduleType))
+
+	for i, m := range matches {
+		if i >= 4 {
+			break
+		}
+		sb.WriteString(fmt.Sprintf("📍 **%s**\n", m.Location))
+		for cls, tm := range m.Times {
+			sb.WriteString(fmt.Sprintf("  • %s: **%s**\n", cls, tm))
+		}
+		if m.Note != "" {
+			sb.WriteString(fmt.Sprintf("  📌 %s\n", m.Note))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("💡 **안내 사항**\n")
+	sb.WriteString("• 표기된 시간은 출발 시간이니 **3분 전 대기** 바랍니다.\n")
+	if first.Contact != "" {
+		sb.WriteString(fmt.Sprintf("• 차량 문의: **%s** (%s)\n", first.Contact, first.OperatingHours))
+	}
+
+	resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
+	resp.AddQuickReply("우미린 2차 시간", "우미린 2차 버스 몇 시에 와?")
+	resp.AddQuickReply("양포도서관 시간", "양포도서관 버스 몇 시에 와?")
+	resp.AddQuickReply("도움말", "도움말")
+	return resp
 }

@@ -80,6 +80,10 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
+			busSvc := academy.NewService()
+			_ = busSvc.LoadFromDir("data/schedules")
+			_ = busSvc.LoadFromDir("data")
+
 			// Initialize Agent if Vertex AI or Bedrock is configured
 			var botAgent agent.Agent
 			if runtimeCfg.VertexAPIKey != "" {
@@ -95,10 +99,6 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				} else {
 					registry := agent.NewToolRegistry()
 					registry.Register(&agent.ServerStatusTool{})
-
-					busSvc := academy.NewService()
-					_ = busSvc.LoadFromDir("data/schedules")
-					_ = busSvc.LoadFromDir("data")
 					registry.Register(agent.NewBusScheduleTool(busSvc))
 
 					botAgent = agent.NewAgent(agent.AgentConfig{
@@ -115,6 +115,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				ChannelID:    opts.ChannelID,
 				AIProvider:   aiProvider,
 				Agent:        botAgent,
+				BusService:   busSvc,
 				SystemPrompt: opts.AISystemPrompt,
 				Out:          cmd.OutOrStdout(),
 			})
