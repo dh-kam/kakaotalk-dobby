@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dh-kam/kakao-bot/pkg/ai"
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 )
 
 // AppConfig contains common application configuration.

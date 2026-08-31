@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 )
 
 // Dispatcher handles delivery of fired scheduled jobs to KakaoTalk.

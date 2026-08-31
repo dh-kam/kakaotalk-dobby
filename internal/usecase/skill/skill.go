@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dh-kam/kakao-bot/pkg/academy"
-	"github.com/dh-kam/kakao-bot/pkg/agent"
-	"github.com/dh-kam/kakao-bot/pkg/ai"
-	"github.com/dh-kam/kakao-bot/pkg/openbuilder"
-	"github.com/dh-kam/kakao-bot/pkg/scheduler"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/agent"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
 )
 
 // SkillServeRequest holds options for the OpenBuilder Skill Server.

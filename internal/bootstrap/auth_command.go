@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dh-kam/kakao-bot/internal/config"
-	"github.com/dh-kam/kakao-bot/internal/usecase/auth"
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/internal/config"
+	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/auth"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 	"github.com/dh-kam/refutils/flagsbinder"
 	"github.com/spf13/cobra"
 )

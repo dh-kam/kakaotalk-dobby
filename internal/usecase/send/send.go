@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 )
 
 // SendMeRequest holds options for sending a message to oneself.

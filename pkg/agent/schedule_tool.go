@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dh-kam/kakao-bot/pkg/scheduler"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
 )
 
 // ScheduleNotificationTool allows the AI Agent to register reminders and notifications.

@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 	"github.com/samber/lo"
 )
 

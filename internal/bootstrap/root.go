@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"context"
 
-	"github.com/dh-kam/kakao-bot/internal/buildinfo"
+	"github.com/dh-kam/kakaotalk-dobby/internal/buildinfo"
 	"github.com/spf13/cobra"
 )
 

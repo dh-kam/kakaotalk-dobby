@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dh-kam/kakao-bot/internal/config"
-	"github.com/dh-kam/kakao-bot/internal/usecase/send"
+	"github.com/dh-kam/kakaotalk-dobby/internal/config"
+	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/send"
 	"github.com/dh-kam/refutils/flagsbinder"
 	"github.com/spf13/cobra"
 )

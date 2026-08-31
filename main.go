@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/dh-kam/kakao-bot/internal/bootstrap"
+	"github.com/dh-kam/kakaotalk-dobby/internal/bootstrap"
 )
 
 var errorPrefix = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")).Render("ERROR:")

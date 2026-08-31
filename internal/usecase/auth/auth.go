@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 )
 
 // LoginRequest holds parameters for authentication login.

@@ -6,9 +6,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/dh-kam/kakao-bot/pkg/academy"
-	"github.com/dh-kam/kakao-bot/pkg/agent"
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/agent"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 )
 
 // AgentRunRequest holds parameters for executing an Agent prompt.

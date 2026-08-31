@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dh-kam/kakao-bot/pkg/ai"
-	"github.com/dh-kam/kakao-bot/pkg/openbuilder"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

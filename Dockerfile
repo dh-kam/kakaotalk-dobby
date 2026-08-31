@@ -23,9 +23,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
         -ldflags="-s -w \
-            -X github.com/dh-kam/kakao-bot/internal/buildinfo.Version=${VERSION} \
-            -X github.com/dh-kam/kakao-bot/internal/buildinfo.Commit=${COMMIT} \
-            -X github.com/dh-kam/kakao-bot/internal/buildinfo.Date=${DATE}" \
+            -X github.com/dh-kam/kakaotalk-dobby/internal/buildinfo.Version=${VERSION} \
+            -X github.com/dh-kam/kakaotalk-dobby/internal/buildinfo.Commit=${COMMIT} \
+            -X github.com/dh-kam/kakaotalk-dobby/internal/buildinfo.Date=${DATE}" \
         -o /out/kakaobot .
 
 FROM alpine:${ALPINE_VERSION}

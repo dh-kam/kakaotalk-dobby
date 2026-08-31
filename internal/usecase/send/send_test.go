@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

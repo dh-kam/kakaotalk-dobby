@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 )
 
 // maxRequestBodyBytes caps incoming webhook payloads to block memory exhaustion.

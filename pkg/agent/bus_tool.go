@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dh-kam/kakao-bot/pkg/academy"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
 )
 
 // BusScheduleTool allows the Agent to look up multi-academy shuttle bus times.
