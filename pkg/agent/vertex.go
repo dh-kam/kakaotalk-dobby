@@ -172,6 +172,9 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 	if p.bearerToken != "" {
 		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.bearerToken))
 	}
+	if p.apiKey != "" {
+		httpReq.Header.Set("x-goog-api-key", p.apiKey)
+	}
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {

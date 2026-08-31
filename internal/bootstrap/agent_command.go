@@ -35,7 +35,9 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 		GCPProject   string `flag:"gcp-project" usage:"Google Cloud Project ID for Vertex AI"`
 		GCPLocation  string `flag:"gcp-location" usage:"Google Cloud Location (e.g. us-central1, asia-northeast3)"`
 		GCPToken     string `flag:"gcp-token" usage:"Google Cloud OAuth2 Access Token"`
+		APIKey       string `flag:"api-key" usage:"API Key (e.g. VERTEX_API_KEY)"`
 		AWSRegion    string `flag:"aws-region" usage:"AWS Region for Bedrock (e.g. us-east-1, ap-northeast-2)"`
+		AWSBearer    string `flag:"aws-bearer" usage:"AWS Bedrock Bearer Token / API Key"`
 		AWSAccessKey string `flag:"aws-access-key" usage:"AWS Access Key ID"`
 		AWSSecretKey string `flag:"aws-secret-key" usage:"AWS Secret Access Key"`
 		Prompt       string `flag:"prompt" usage:"User instruction / query for the agent"`
@@ -48,10 +50,12 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 	binder := flagsbinder.NewViperCobraFlagsBinder().
 		StringP("provider", "p", "vertex", "Agent LLM provider (vertex, bedrock, mock)").
 		StringP("model", "m", "", "Model ID").
-		String("gcp-project", "", "Google Cloud Project ID for Vertex AI").
-		String("gcp-location", "us-central1", "Google Cloud Location for Vertex AI").
+		String("gcp-project", cfg.VertexProject, "Google Cloud Project ID for Vertex AI").
+		String("gcp-location", cfg.VertexLocation, "Google Cloud Location for Vertex AI").
 		String("gcp-token", "", "Google Cloud OAuth2 Access Token").
-		String("aws-region", "us-east-1", "AWS Region for Bedrock").
+		String("api-key", cfg.VertexAPIKey, "Google Vertex API Key (VERTEX_API_KEY)").
+		String("aws-region", cfg.BedrockRegion, "AWS Region for Bedrock").
+		String("aws-bearer", cfg.BedrockBearerToken, "AWS Bedrock Bearer Token / API Key (AWS_BEARER_TOKEN_BEDROCK)").
 		String("aws-access-key", "", "AWS Access Key ID").
 		String("aws-secret-key", "", "AWS Secret Access Key").
 		String("prompt", "", "User instruction / query for the agent").
@@ -80,13 +84,18 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			bearerToken := opts.GCPToken
+			if opts.Provider == "bedrock" && opts.AWSBearer != "" {
+				bearerToken = opts.AWSBearer
+			}
 			return agent.NewAgentRunUseCase().Execute(cmd.Context(), agent.AgentRunRequest{
 				ProviderName: opts.Provider,
 				Model:        opts.Model,
 				Project:      opts.GCPProject,
 				Location:     opts.GCPLocation,
 				Region:       opts.AWSRegion,
-				BearerToken:  opts.GCPToken,
+				BearerToken:  bearerToken,
+				APIKey:       opts.APIKey,
 				AccessKeyID:  opts.AWSAccessKey,
 				SecretKey:    opts.AWSSecretKey,
 				Prompt:       opts.Prompt,

@@ -170,6 +170,9 @@ func (p *bedrockProvider) GenerateWithTools(ctx context.Context, req ToolComplet
 	httpReq.Header.Set("Content-Type", "application/json")
 	if p.bearerToken != "" {
 		httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.bearerToken))
+		if strings.HasPrefix(p.bearerToken, "ABSK") {
+			httpReq.Header.Set("x-api-key", p.bearerToken)
+		}
 	}
 
 	resp, err := p.httpClient.Do(httpReq)

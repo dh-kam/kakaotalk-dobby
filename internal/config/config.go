@@ -21,6 +21,12 @@ type AppConfig struct {
 	AIBaseURL      string
 	AIModel        string
 	AISystemPrompt string
+
+	VertexAPIKey       string
+	VertexProject      string
+	VertexLocation     string
+	BedrockBearerToken string
+	BedrockRegion      string
 }
 
 // Load loads configuration from .env file and environment variables with sensible defaults.
@@ -33,6 +39,8 @@ func Load() *AppConfig {
 			aiKey = k
 		} else if k := os.Getenv("GEMINI_API_KEY"); k != "" {
 			aiKey = k
+		} else if k := os.Getenv("VERTEX_API_KEY"); k != "" {
+			aiKey = k
 		} else if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
 			aiKey = k
 		}
@@ -40,7 +48,7 @@ func Load() *AppConfig {
 
 	aiProvider := os.Getenv("AI_PROVIDER")
 	if aiProvider == "" {
-		if os.Getenv("GEMINI_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") == "" {
+		if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("VERTEX_API_KEY") != "" {
 			aiProvider = "gemini"
 		} else if os.Getenv("ANTHROPIC_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") == "" {
 			aiProvider = "claude"
@@ -51,16 +59,34 @@ func Load() *AppConfig {
 		}
 	}
 
+	vertexLocation := os.Getenv("VERTEX_LOCATION")
+	if vertexLocation == "" {
+		vertexLocation = "us-central1"
+	}
+
+	bedrockRegion := os.Getenv("AWS_REGION")
+	if bedrockRegion == "" {
+		bedrockRegion = os.Getenv("BEDROCK_REGION")
+	}
+	if bedrockRegion == "" {
+		bedrockRegion = "us-east-1"
+	}
+
 	cfg := &AppConfig{
-		ClientID:       os.Getenv("KAKAO_REST_API_KEY"),
-		ClientSecret:   os.Getenv("KAKAO_CLIENT_SECRET"),
-		RedirectURI:    os.Getenv("KAKAO_REDIRECT_URI"),
-		TokenPath:      os.Getenv("KAKAO_TOKEN_PATH"),
-		AIProvider:     aiProvider,
-		AIAPIKey:       aiKey,
-		AIBaseURL:      os.Getenv("AI_BASE_URL"),
-		AIModel:        os.Getenv("AI_MODEL"),
-		AISystemPrompt: os.Getenv("AI_SYSTEM_PROMPT"),
+		ClientID:           os.Getenv("KAKAO_REST_API_KEY"),
+		ClientSecret:       os.Getenv("KAKAO_CLIENT_SECRET"),
+		RedirectURI:        os.Getenv("KAKAO_REDIRECT_URI"),
+		TokenPath:          os.Getenv("KAKAO_TOKEN_PATH"),
+		AIProvider:         aiProvider,
+		AIAPIKey:           aiKey,
+		AIBaseURL:          os.Getenv("AI_BASE_URL"),
+		AIModel:            os.Getenv("AI_MODEL"),
+		AISystemPrompt:     os.Getenv("AI_SYSTEM_PROMPT"),
+		VertexAPIKey:       os.Getenv("VERTEX_API_KEY"),
+		VertexProject:      os.Getenv("VERTEX_PROJECT"),
+		VertexLocation:     vertexLocation,
+		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
+		BedrockRegion:      bedrockRegion,
 	}
 
 	if cfg.RedirectURI == "" {
@@ -116,9 +142,14 @@ func (c *AppConfig) BuildKakaoClient() kakao.Client {
 
 // BuildAIProvider constructs an ai.Provider interface from configuration.
 func (c *AppConfig) BuildAIProvider() (ai.Provider, error) {
+	apiKey := c.AIAPIKey
+	if c.AIProvider == "gemini" && c.VertexAPIKey != "" {
+		apiKey = c.VertexAPIKey
+	}
+
 	return ai.NewProvider(ai.ProviderConfig{
 		ProviderName: c.AIProvider,
-		APIKey:       c.AIAPIKey,
+		APIKey:       apiKey,
 		BaseURL:      c.AIBaseURL,
 		Model:        c.AIModel,
 	})
