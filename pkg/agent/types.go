@@ -11,9 +11,10 @@ type Message struct {
 
 // ToolCall represents a model-requested tool invocation.
 type ToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Arguments        string `json:"arguments"`
+	ThoughtSignature string `json:"thought_signature,omitempty"`
 }
 
 // ToolDefinition describes a tool schema to the LLM.

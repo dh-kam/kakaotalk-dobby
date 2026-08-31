@@ -36,20 +36,24 @@ type VertexConfig struct {
 
 // NewVertexProvider creates a new Google Vertex AI Provider.
 func NewVertexProvider(cfg VertexConfig) LLMProvider {
+	project := cfg.Project
+	if project == "" {
+		project = "c0de1ab-dev-494714"
+	}
 	loc := cfg.Location
 	if loc == "" {
-		loc = "us-central1"
+		loc = "global"
 	}
 	model := cfg.Model
 	if model == "" {
-		model = "gemini-1.5-flash"
+		model = "gemini-3.7-flash"
 	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &vertexProvider{
-		project:       cfg.Project,
+		project:       project,
 		location:      loc,
 		model:         model,
 		bearerToken:   cfg.BearerToken,
@@ -98,12 +102,16 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 			if err := json.Unmarshal([]byte(tc.Arguments), &argsMap); err != nil {
 				argsMap = map[string]interface{}{"raw_args": tc.Arguments}
 			}
-			parts = append(parts, map[string]interface{}{
+			partMap := map[string]interface{}{
 				"functionCall": map[string]interface{}{
 					"name": tc.Name,
 					"args": argsMap,
 				},
-			})
+			}
+			if tc.ThoughtSignature != "" {
+				partMap["thoughtSignature"] = tc.ThoughtSignature
+			}
+			parts = append(parts, partMap)
 		}
 
 		if m.Role == "tool" {
@@ -196,8 +204,9 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 			Content struct {
 				Role  string `json:"role"`
 				Parts []struct {
-					Text         string `json:"text,omitempty"`
-					FunctionCall *struct {
+					Text             string `json:"text,omitempty"`
+					ThoughtSignature string `json:"thoughtSignature,omitempty"`
+					FunctionCall     *struct {
 						Name string                 `json:"name"`
 						Args map[string]interface{} `json:"args"`
 					} `json:"functionCall,omitempty"`
@@ -231,9 +240,10 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 		if part.FunctionCall != nil {
 			argsBytes, _ := json.Marshal(part.FunctionCall.Args)
 			toolCalls = append(toolCalls, ToolCall{
-				ID:        fmt.Sprintf("call_%d_%s", i, part.FunctionCall.Name),
-				Name:      part.FunctionCall.Name,
-				Arguments: string(argsBytes),
+				ID:               fmt.Sprintf("call_%d_%s", i, part.FunctionCall.Name),
+				Name:             part.FunctionCall.Name,
+				Arguments:        string(argsBytes),
+				ThoughtSignature: part.ThoughtSignature,
 			})
 		}
 	}
@@ -253,9 +263,6 @@ func (p *vertexProvider) GenerateWithTools(ctx context.Context, req ToolCompleti
 func (p *vertexProvider) buildEndpoint() string {
 	if p.customBaseURL != "" {
 		return p.customBaseURL
-	}
-	if p.apiKey != "" && p.project == "" {
-		return fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", p.model, p.apiKey)
 	}
 	if p.location == "global" || p.location == "" {
 		return fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:generateContent",
