@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/dh-kam/kakao-bot/pkg/agent"
 	"github.com/dh-kam/kakao-bot/pkg/ai"
 	"github.com/dh-kam/kakao-bot/pkg/openbuilder"
+	"github.com/dh-kam/kakao-bot/pkg/scheduler"
 )
 
 // SkillServeRequest holds options for the OpenBuilder Skill Server.
@@ -25,6 +27,7 @@ type SkillServeRequest struct {
 	AIProvider   ai.Provider
 	Agent        agent.Agent
 	BusService   *academy.Service
+	Scheduler    *scheduler.Engine
 	SystemPrompt string
 	Out          io.Writer
 }
@@ -82,7 +85,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			utterance = payload.Action.Params["utterance"]
 		}
 
-		respPayload := processUtterance(r.Context(), utterance, req.ChannelID, req.BusService, req.Agent, req.AIProvider, req.SystemPrompt)
+		respPayload := processUtterance(r.Context(), utterance, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, req.SystemPrompt)
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -103,6 +106,9 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
+	if req.Scheduler != nil {
+		fmt.Fprintf(out, "  - Cron Scheduler: Active (%d jobs loaded)\n", len(req.Scheduler.ListJobs("")))
+	}
 	if req.Agent != nil {
 		fmt.Fprintf(out, "  - Autonomous Agent: Active (%d tools registered)\n", len(req.Agent.GetTools()))
 	} else {
@@ -127,7 +133,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(ctx context.Context, utterance, channelID string, busSvc *academy.Service, botAgent agent.Agent, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, channelID string, busSvc *academy.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
 	text := strings.ToLower(utterance)
 
 	switch {
@@ -141,11 +147,54 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 
 	case text == "도움말" || text == "help" || text == "?":
 		resp := openbuilder.NewSimpleTextResponse(
-			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n사용 가능한 질문 예시:\n- 🚌 \"정상어학원 우미린 2차 버스 몇 시에 와?\"\n- 🚌 \"정상어학원 2호차 등원 시간표 알려줘\"\n- 💬 \"서버 상태 확인해줘\"\n- ℹ️ \"채널 정보\"\n\n💡 원하는 질문을 자유롭게 입력하시면 AI Agent가 도구를 호출하여 정확히 답변해 드립니다!",
+			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n" +
+				"💡 사용 가능한 질문 예시:\n" +
+				"• 🚌 정상어학원 우미린 2차 버스 몇 시에 와?\n" +
+				"• ⏰ 매주 평일 15:00에 버스 출발 알림 등록해줘\n" +
+				"• 📋 등록된 알림 목록 보여줘\n" +
+				"• 💬 서버 상태 확인해줘\n" +
+				"• ℹ️ 채널 정보\n\n" +
+				"궁금하신 내용을 카카오톡 메시지로 편하게 물어보세요!",
 		)
 		resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+		resp.AddQuickReply("알림 목록", "알림 목록")
 		resp.AddQuickReply("서버 상태", "상태")
-		resp.AddQuickReply("채널 정보", "채널")
+		return resp
+
+	case text == "알림목록" || text == "알림 목록" || text == "스케줄" || text == "스케줄목록" || text == "예약목록":
+		if schedEngine != nil {
+			jobs := schedEngine.ListJobs("")
+			if len(jobs) == 0 {
+				resp := openbuilder.NewSimpleTextResponse("📋 현재 등록된 예약 알림이 없습니다.\n\n예: \"10분 뒤에 라면 끓이기 알림 줘\" 또는 \"매주 평일 15:00에 정상어학원 알림 줘\"")
+				resp.AddQuickReply("도움말", "도움말")
+				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+				return resp
+			}
+
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("📋 예약된 알림 목록 (총 %d건):\n\n", len(jobs)))
+			for i, j := range jobs {
+				statusIcon := "🟢"
+				if j.Status == scheduler.JobStatusCompleted {
+					statusIcon = "✅"
+				} else if j.Status == scheduler.JobStatusCancelled {
+					statusIcon = "❌"
+				}
+				sb.WriteString(fmt.Sprintf("%d. %s %s\n", i+1, statusIcon, j.Title))
+				if j.Type == scheduler.ScheduleTypeOnce {
+					sb.WriteString(fmt.Sprintf("   • 실행: %s\n", j.ExecuteAt.Format("01/02 15:04")))
+				} else {
+					sb.WriteString(fmt.Sprintf("   • 주기(Cron): %s\n", j.CronExpr))
+				}
+				sb.WriteString(fmt.Sprintf("   • 내용: %s\n\n", j.Message))
+			}
+
+			resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
+			resp.AddQuickReply("도움말", "도움말")
+			resp.AddQuickReply("상태 확인", "상태")
+			return resp
+		}
+		resp := openbuilder.NewSimpleTextResponse("스케줄러가 활성화되지 않았습니다.")
 		return resp
 
 	case text == "상태" || text == "status" || text == "서버상태":
@@ -184,8 +233,15 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 		return resp
 
 	default:
-		// 1. Fast Path for Bus Schedule (Sub-10ms response to guarantee safety under Kakao 5s timeout)
-		if busSvc != nil && isBusQuery(text) {
+		// 1. Fast Path for Scheduler (Sub-10ms response for direct reminder/recurring commands)
+		if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
+			if resp := handleScheduleFastPath(schedEngine, text); resp != nil {
+				return resp
+			}
+		}
+
+		// 2. Native ItemCard Fast Path for Bus Schedule (Sub-100ms response & native UI)
+		if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
 			if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
 				return resp
 			}
@@ -200,8 +256,10 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
 			} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
-				resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(agentRes.Output))
+				cleanText := stripMarkdown(strings.TrimSpace(agentRes.Output))
+				resp := openbuilder.NewSimpleTextResponse(cleanText)
 				resp.AddQuickReply("도움말", "도움말")
+				resp.AddQuickReply("알림 목록", "알림 목록")
 				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
 				return resp
 			}
@@ -217,7 +275,8 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
 			} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
-				resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(aiResp.Text))
+				cleanText := stripMarkdown(strings.TrimSpace(aiResp.Text))
+				resp := openbuilder.NewSimpleTextResponse(cleanText)
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("서버 상태", "상태")
 				return resp
@@ -241,7 +300,6 @@ func isBusQuery(text string) bool {
 }
 
 func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {
-	// Extract stop / location keyword
 	locations := []string{
 		"우미린2차", "우미린 2차", "우미린1차", "우미린 1차", "우미린",
 		"해마루초", "이편한", "중흥1차", "중흥 1차", "중흥",
@@ -266,33 +324,180 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 		return nil
 	}
 
-	var sb strings.Builder
 	first := matches[0]
-	sb.WriteString(fmt.Sprintf("🚌 %s (%s %s 시간표)\n\n", first.AcademyName, first.VehicleNumber, first.ScheduleType))
 
-	for i, m := range matches {
-		if i >= 4 {
-			break
-		}
-		sb.WriteString(fmt.Sprintf("📍 **%s**\n", m.Location))
+	// Build native ItemList for ItemCard
+	var items []openbuilder.ItemCardItem
+	for _, m := range matches {
 		for cls, tm := range m.Times {
-			sb.WriteString(fmt.Sprintf("  • %s: **%s**\n", cls, tm))
+			items = append(items, openbuilder.ItemCardItem{
+				Title:       fmt.Sprintf("%s (%s)", m.Location, cls),
+				Description: tm,
+			})
 		}
-		if m.Note != "" {
-			sb.WriteString(fmt.Sprintf("  📌 %s\n", m.Note))
-		}
-		sb.WriteString("\n")
 	}
 
-	sb.WriteString("💡 **안내 사항**\n")
-	sb.WriteString("• 표기된 시간은 출발 시간이니 **3분 전 대기** 바랍니다.\n")
-	if first.Contact != "" {
-		sb.WriteString(fmt.Sprintf("• 차량 문의: **%s** (%s)\n", first.Contact, first.OperatingHours))
+	// Limit to max 10 items (Kakao ItemCard limitation)
+	if len(items) > 10 {
+		items = items[:10]
 	}
 
-	resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
+	phoneClean := strings.ReplaceAll(first.Contact, "-", "")
+	phoneClean = strings.ReplaceAll(phoneClean, " ", "")
+
+	card := &openbuilder.ItemCard{
+		ImageTitle: &openbuilder.ItemCardImageTitle{
+			Title:       fmt.Sprintf("%s %s", first.AcademyName, first.VehicleNumber),
+			Description: fmt.Sprintf("%s 시간표 안내", first.ScheduleType),
+		},
+		Title:             "승강장별 탑승 시각",
+		Description:       "• 표기된 시각 3분 전까지 승강장에 대기해 주세요.",
+		ItemList:          items,
+		ItemListAlignment: "right",
+		ItemListSummary: &openbuilder.ItemCardSummary{
+			Title:       "차량 문의",
+			Description: first.Contact,
+		},
+		Buttons: []openbuilder.CardButton{
+			openbuilder.NewPhoneButton("기사님 전화 연결", phoneClean),
+			openbuilder.NewMessageButton("다른 정류장 조회", "정상어학원 버스 시간표 알려줘"),
+		},
+	}
+
+	resp := openbuilder.NewItemCardResponse(card)
 	resp.AddQuickReply("우미린 2차 시간", "우미린 2차 버스 몇 시에 와?")
 	resp.AddQuickReply("양포도서관 시간", "양포도서관 버스 몇 시에 와?")
 	resp.AddQuickReply("도움말", "도움말")
 	return resp
+}
+
+func stripMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "**", "")
+	s = strings.ReplaceAll(s, "__", "")
+	s = strings.ReplaceAll(s, "### ", "")
+	s = strings.ReplaceAll(s, "## ", "")
+	s = strings.ReplaceAll(s, "# ", "")
+	s = strings.ReplaceAll(s, "`", "")
+	s = strings.ReplaceAll(s, "> ", "💡 ")
+	return s
+}
+
+func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance string) *openbuilder.SkillResponse {
+	text := strings.TrimSpace(utterance)
+	loc := schedEngine.Location()
+	if loc == nil {
+		loc = time.Local
+	}
+	now := time.Now().In(loc)
+
+	// Cancellation: e.g. "알림 취소 job_123" or "취소 job_123"
+	if strings.Contains(text, "취소") || strings.Contains(text, "삭제") {
+		fields := strings.Fields(text)
+		for _, f := range fields {
+			if strings.HasPrefix(f, "job_") {
+				if err := schedEngine.CancelJob(f); err == nil {
+					resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("✅ 알림 ID %s 가 성공적으로 취소되었습니다.", f))
+					resp.AddQuickReply("알림 목록", "알림 목록")
+					resp.AddQuickReply("도움말", "도움말")
+					return resp
+				}
+			}
+		}
+	}
+
+	// Recurring pattern: e.g. "매주 평일 오후 3시에 정상어학원 2호차 등원 알림 등록해줘"
+	if strings.Contains(text, "매주") || strings.Contains(text, "매일") || strings.Contains(text, "평일") {
+		var cronExpr string
+		var hour, min int = 15, 0 // default 15:00
+
+		if strings.Contains(text, "오후 3시") || strings.Contains(text, "15시") || strings.Contains(text, "15:00") {
+			hour = 15
+		} else if strings.Contains(text, "오전 8시") || strings.Contains(text, "8시") || strings.Contains(text, "08:00") {
+			hour = 8
+		} else if strings.Contains(text, "오후 4시") || strings.Contains(text, "16시") || strings.Contains(text, "16:00") {
+			hour = 16
+		} else if strings.Contains(text, "오후 5시") || strings.Contains(text, "17시") || strings.Contains(text, "17:00") {
+			hour = 17
+		}
+
+		if strings.Contains(text, "평일") || strings.Contains(text, "월~금") || strings.Contains(text, "월요일부터 금요일") {
+			cronExpr = fmt.Sprintf("%d %d * * 1-5", min, hour)
+		} else if strings.Contains(text, "매일") {
+			cronExpr = fmt.Sprintf("%d %d * * *", min, hour)
+		} else if strings.Contains(text, "주말") {
+			cronExpr = fmt.Sprintf("%d %d * * 6,0", min, hour)
+		} else {
+			cronExpr = fmt.Sprintf("%d %d * * 1-5", min, hour)
+		}
+
+		title := "정상어학원 2호차 등원 알림"
+		if strings.Contains(text, "라면") {
+			title = "라면 알림"
+		} else if strings.Contains(text, "비타민") {
+			title = "비타민 복용 알림"
+		}
+
+		msg := fmt.Sprintf("%s 시간입니다. (오후 %d:%02d) ⏰", title, hour, min)
+
+		job, err := schedEngine.ScheduleRecurring("kakao_user", title, msg, cronExpr, nil)
+		if err == nil {
+			resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
+				"✅ 반복 알림이 등록되었습니다.\n\n• 제목: %s\n• 주기(Cron): %s (매주 평일 %02d:%02d)\n• 내용: %s",
+				job.Title, job.CronExpr, hour, min, job.Message,
+			))
+			resp.AddQuickReply("알림 목록", "알림 목록")
+			resp.AddQuickReply("도움말", "도움말")
+			return resp
+		}
+	}
+
+	// Relative one-shot: e.g. "10분 뒤에 라면 물 끄기 알림 등록해줘"
+	if strings.Contains(text, "분 뒤") || strings.Contains(text, "분후") || strings.Contains(text, "시간 뒤") || strings.Contains(text, "초 뒤") {
+		var dur time.Duration
+		fields := strings.Fields(text)
+		for _, f := range fields {
+			if strings.Contains(f, "분") {
+				numStr := strings.TrimRight(f, "분뒤후에 ")
+				if n, err := strconv.Atoi(numStr); err == nil {
+					dur += time.Duration(n) * time.Minute
+				}
+			} else if strings.Contains(f, "시간") {
+				numStr := strings.TrimRight(f, "시간뒤후에 ")
+				if n, err := strconv.Atoi(numStr); err == nil {
+					dur += time.Duration(n) * time.Hour
+				}
+			} else if strings.Contains(f, "초") {
+				numStr := strings.TrimRight(f, "초뒤후에 ")
+				if n, err := strconv.Atoi(numStr); err == nil {
+					dur += time.Duration(n) * time.Second
+				}
+			}
+		}
+
+		if dur > 0 {
+			execTime := now.Add(dur)
+			title := "예약 알림"
+			if strings.Contains(text, "라면") {
+				title = "라면 물/불 끄기 알림"
+			} else if strings.Contains(text, "버스") {
+				title = "학원 버스 알림"
+			} else if strings.Contains(text, "세탁") {
+				title = "세탁기 확인 알림"
+			}
+
+			msg := fmt.Sprintf("약속된 시간이 되었습니다! (%s) ⏰", title)
+			job, err := schedEngine.ScheduleOnce("kakao_user", title, msg, execTime, nil)
+			if err == nil {
+				resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
+					"✅ 알림이 성공적으로 예약되었습니다.\n\n• 제목: %s\n• 예정 시각: %s (KST)\n• 내용: %s",
+					job.Title, job.ExecuteAt.Format("15:04:05"), job.Message,
+				))
+				resp.AddQuickReply("알림 목록", "알림 목록")
+				resp.AddQuickReply("도움말", "도움말")
+				return resp
+			}
+		}
+	}
+
+	return nil
 }

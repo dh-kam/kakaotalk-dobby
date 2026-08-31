@@ -13,7 +13,7 @@ type defaultAgent struct {
 	maxIterations int
 }
 
-// AgentConfig holds settings to configure an Agent.
+// AgentConfig configures the ReAct Agent.
 type AgentConfig struct {
 	Provider      LLMProvider
 	Tools         *ToolRegistry
@@ -21,41 +21,32 @@ type AgentConfig struct {
 	MaxIterations int
 }
 
-// NewAgent creates a new Agent instance.
+// NewAgent creates a new ReAct Agent.
 func NewAgent(cfg AgentConfig) Agent {
-	maxIter := cfg.MaxIterations
-	if maxIter <= 0 {
-		maxIter = 5
+	if cfg.MaxIterations <= 0 {
+		cfg.MaxIterations = 5
 	}
-	sysPrompt := cfg.SystemPrompt
-	if sysPrompt == "" {
-		sysPrompt = "You are a smart, autonomous AI assistant. You can reason step-by-step and call available tools when needed to answer user questions."
-	}
-	tools := cfg.Tools
-	if tools == nil {
-		tools = NewToolRegistry()
+	if cfg.SystemPrompt == "" {
+		cfg.SystemPrompt = "You are a helpful and reliable AI Assistant. Solve user queries by reasoning and calling appropriate tools step-by-step."
 	}
 	return &defaultAgent{
 		provider:      cfg.Provider,
-		tools:         tools,
-		systemPrompt:  sysPrompt,
-		maxIterations: maxIter,
+		tools:         cfg.Tools,
+		systemPrompt:  cfg.SystemPrompt,
+		maxIterations: cfg.MaxIterations,
 	}
-}
-
-func (a *defaultAgent) GetProvider() LLMProvider {
-	return a.provider
 }
 
 func (a *defaultAgent) GetTools() []Tool {
 	return a.tools.List()
 }
 
-func (a *defaultAgent) Run(ctx context.Context, input string) (*AgentResult, error) {
-	if a.provider == nil {
-		return nil, fmt.Errorf("llm provider is not configured")
-	}
+func (a *defaultAgent) GetProvider() LLMProvider {
+	return a.provider
+}
 
+// Run executes the ReAct reasoning & tool execution loop until completion.
+func (a *defaultAgent) Run(ctx context.Context, input string) (*AgentResult, error) {
 	messages := []Message{
 		{Role: "user", Content: input},
 	}
@@ -75,6 +66,15 @@ func (a *defaultAgent) Run(ctx context.Context, input string) (*AgentResult, err
 
 		resp, err := a.provider.GenerateWithTools(ctx, req)
 		if err != nil {
+			if len(steps) > 0 && len(steps[len(steps)-1].ToolResults) > 0 {
+				// If a tool was executed in previous step, return tool result safely
+				lastToolRes := steps[len(steps)-1].ToolResults[0]
+				return &AgentResult{
+					Output: lastToolRes.Output,
+					Steps:  steps,
+					Usage:  totalUsage,
+				}, nil
+			}
 			return nil, fmt.Errorf("llm generate error at step %d: %w", iteration, err)
 		}
 
@@ -142,6 +142,14 @@ func (a *defaultAgent) Run(ctx context.Context, input string) (*AgentResult, err
 	}
 
 	lastStep := steps[len(steps)-1]
+	if len(lastStep.ToolResults) > 0 {
+		return &AgentResult{
+			Output: lastStep.ToolResults[0].Output,
+			Steps:  steps,
+			Usage:  totalUsage,
+		}, nil
+	}
+
 	return &AgentResult{
 		Output: fmt.Sprintf("%s\n(Reached maximum reasoning iterations: %d)", lastStep.Thought, a.maxIterations),
 		Steps:  steps,

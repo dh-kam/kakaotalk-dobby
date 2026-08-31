@@ -71,6 +71,7 @@ type MatchResult struct {
 // Service manages multi-academy bus schedules.
 type Service struct {
 	schedules []*BusSchedule
+	seen      map[string]bool
 	mu        sync.RWMutex
 }
 
@@ -78,10 +79,11 @@ type Service struct {
 func NewService() *Service {
 	return &Service{
 		schedules: make([]*BusSchedule, 0),
+		seen:      make(map[string]bool),
 	}
 }
 
-// LoadFromDir loads all schedule JSON files from a directory.
+// LoadFromDir loads all schedule JSON files from a directory without duplicates.
 func (s *Service) LoadFromDir(dirPath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -107,25 +109,37 @@ func (s *Service) LoadFromDir(dirPath string) error {
 			continue
 		}
 
+		key := fmt.Sprintf("%s|%s|%s", sched.Academy.Name, sched.Academy.VehicleNumber, sched.Academy.Type)
+		if s.seen[key] {
+			continue
+		}
+		s.seen[key] = true
 		s.schedules = append(s.schedules, &sched)
 	}
 
 	return nil
 }
 
-// AddSchedule adds an in-memory schedule.
+// AddSchedule adds an in-memory schedule without duplicates.
 func (s *Service) AddSchedule(sched *BusSchedule) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := fmt.Sprintf("%s|%s|%s", sched.Academy.Name, sched.Academy.VehicleNumber, sched.Academy.Type)
+	if s.seen[key] {
+		return
+	}
+	s.seen[key] = true
 	s.schedules = append(s.schedules, sched)
 }
 
-// Search searches schedules matching the query.
+// Search searches schedules matching the query with deduplicated results.
 func (s *Service) Search(q SearchQuery) []MatchResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []MatchResult
+	seenStops := make(map[string]bool)
+
 	academyQ := strings.ToLower(strings.TrimSpace(q.Academy))
 	locationQ := strings.ToLower(strings.TrimSpace(q.Location))
 	vehicleQ := strings.ToLower(strings.TrimSpace(q.Vehicle))
@@ -146,6 +160,12 @@ func (s *Service) Search(q SearchQuery) []MatchResult {
 			if locationQ != "" && !s.matchLocation(stop.Location, locationQ) {
 				continue
 			}
+
+			stopKey := fmt.Sprintf("%s|%s|%s", sched.Academy.Name, sched.Academy.VehicleNumber, stop.Location)
+			if seenStops[stopKey] {
+				continue
+			}
+			seenStops[stopKey] = true
 
 			// Format display times
 			times := make(map[string]string)

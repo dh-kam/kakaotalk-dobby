@@ -9,6 +9,8 @@ import (
 	"github.com/dh-kam/kakao-bot/pkg/academy"
 	"github.com/dh-kam/kakao-bot/pkg/agent"
 	"github.com/dh-kam/kakao-bot/pkg/ai"
+	"github.com/dh-kam/kakao-bot/pkg/kakao"
+	"github.com/dh-kam/kakao-bot/pkg/scheduler"
 	"github.com/dh-kam/refutils/flagsbinder"
 	"github.com/spf13/cobra"
 )
@@ -82,7 +84,32 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 
 			busSvc := academy.NewService()
 			_ = busSvc.LoadFromDir("data/schedules")
-			_ = busSvc.LoadFromDir("data")
+
+			// Initialize Scheduler Store & Dispatcher
+			var store scheduler.Store
+			fileStore, err := scheduler.NewFileStore("data/jobs.json")
+			if err != nil {
+				store = scheduler.NewMemoryStore()
+			} else {
+				store = fileStore
+			}
+
+			var kakaoClient kakao.Client
+			if runtimeCfg.ClientID != "" {
+				kakaoClient = kakao.NewClient(kakao.ClientConfig{
+					ClientID:     runtimeCfg.ClientID,
+					ClientSecret: runtimeCfg.ClientSecret,
+					RedirectURI:  runtimeCfg.RedirectURI,
+					TokenStore:   kakao.NewFileTokenStore(runtimeCfg.TokenPath),
+				})
+			}
+			dispatcher := scheduler.NewDispatcher(kakaoClient)
+			schedEngine := scheduler.NewEngine(store, dispatcher.HandleJob)
+
+			if err := schedEngine.Start(cmd.Context()); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠️ Failed to start scheduler engine: %v\n", err)
+			}
+			defer schedEngine.Stop()
 
 			// Initialize Agent if Vertex AI or Bedrock is configured
 			var botAgent agent.Agent
@@ -100,11 +127,14 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					registry := agent.NewToolRegistry()
 					registry.Register(&agent.ServerStatusTool{})
 					registry.Register(agent.NewBusScheduleTool(busSvc))
+					registry.Register(agent.NewScheduleNotificationTool(schedEngine))
+					registry.Register(agent.NewListSchedulesTool(schedEngine))
+					registry.Register(agent.NewCancelScheduleTool(schedEngine))
 
 					botAgent = agent.NewAgent(agent.AgentConfig{
 						Provider:      vProvider,
 						Tools:         registry,
-						SystemPrompt:  "You are a helpful and polite KakaoTalk AI assistant for channel @0xc0de1ab. You have access to tools for looking up academy bus schedules (e.g. 정상어학원, 강의하는아이들) and server status. Always answer politely and concisely in Korean.",
+						SystemPrompt:  "You are a helpful and polite KakaoTalk AI assistant for channel @0xc0de1ab. You have access to tools for looking up academy bus schedules, scheduling notifications/reminders, listing schedules, cancelling schedules, and server status. Always answer politely and concisely in Korean.",
 						MaxIterations: 3,
 					})
 				}
@@ -116,6 +146,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				AIProvider:   aiProvider,
 				Agent:        botAgent,
 				BusService:   busSvc,
+				Scheduler:    schedEngine,
 				SystemPrompt: opts.AISystemPrompt,
 				Out:          cmd.OutOrStdout(),
 			})

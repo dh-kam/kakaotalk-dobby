@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/samber/lo"
 	"google.golang.org/genai"
 )
 
@@ -155,7 +156,11 @@ func (p *vertexSDKProvider) GenerateWithTools(ctx context.Context, req ToolCompl
 		}
 	}
 
-	genConfig := &genai.GenerateContentConfig{}
+	genConfig := &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{
+			ThinkingBudget: lo.ToPtr(int32(0)),
+		},
+	}
 
 	if req.SystemPrompt != "" {
 		genConfig.SystemInstruction = &genai.Content{

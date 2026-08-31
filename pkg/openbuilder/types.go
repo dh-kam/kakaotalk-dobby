@@ -72,6 +72,8 @@ type SkillTemplate struct {
 type Output struct {
 	SimpleText   *SimpleText   `json:"simpleText,omitempty"`
 	SimpleImage  *SimpleImage  `json:"simpleImage,omitempty"`
+	TextCard     *TextCard     `json:"textCard,omitempty"`
+	ItemCard     *ItemCard     `json:"itemCard,omitempty"`
 	BasicCard    *BasicCard    `json:"basicCard,omitempty"`
 	CommerceCard *CommerceCard `json:"commerceCard,omitempty"`
 	ListCard     *ListCard     `json:"listCard,omitempty"`
@@ -87,6 +89,44 @@ type SimpleText struct {
 type SimpleImage struct {
 	ImageURL string `json:"imageUrl"`
 	AltText  string `json:"altText"`
+}
+
+// TextCard represents simple text card.
+type TextCard struct {
+	Title       string       `json:"title,omitempty"`
+	Description string       `json:"description"`
+	Buttons     []CardButton `json:"buttons,omitempty"`
+}
+
+// ItemCard represents KakaoTalk rich key-value item card.
+type ItemCard struct {
+	ImageTitle        *ItemCardImageTitle `json:"imageTitle,omitempty"`
+	Title             string              `json:"title,omitempty"`
+	Description       string              `json:"description,omitempty"`
+	ItemList          []ItemCardItem      `json:"itemList"`
+	ItemListAlignment string              `json:"itemListAlignment,omitempty"` // "left" or "right"
+	ItemListSummary   *ItemCardSummary    `json:"itemListSummary,omitempty"`
+	Buttons           []CardButton        `json:"buttons,omitempty"`
+	ButtonLayout      string              `json:"buttonLayout,omitempty"`
+}
+
+// ItemCardImageTitle represents header with title and description.
+type ItemCardImageTitle struct {
+	ImageURL    string `json:"imageUrl,omitempty"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+// ItemCardItem is a key-value row inside ItemCard.
+type ItemCardItem struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+// ItemCardSummary is the summary footer row inside ItemCard.
+type ItemCardSummary struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
 }
 
 // BasicCard represents card with thumbnail, title, description, and buttons.
