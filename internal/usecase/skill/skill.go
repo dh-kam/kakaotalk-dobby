@@ -93,8 +93,8 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	server := &http.Server{
 		Addr:         req.ListenAddr,
 		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
 	}
 
 	fmt.Fprintf(out, "🚀 Kakao i OpenBuilder Skill Server is running on %s\n", req.ListenAddr)
@@ -174,13 +174,15 @@ func processUtterance(ctx context.Context, utterance, channelID string, botAgent
 		return resp
 
 	default:
-		// Forward to Autonomous Agent or AI Provider with 3.5s timeout to guarantee safety under Kakao 5s limit
-		aiCtx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
+		// Forward to Autonomous Agent or AI Provider with 12s timeout
+		aiCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		defer cancel()
 
 		if botAgent != nil {
 			agentRes, err := botAgent.Run(aiCtx, utterance)
-			if err == nil && agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
+			} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
 				resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(agentRes.Output))
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
@@ -195,7 +197,9 @@ func processUtterance(ctx context.Context, utterance, channelID string, botAgent
 					{Role: "user", Content: utterance},
 				},
 			})
-			if err == nil && aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
+			} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
 				resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(aiResp.Text))
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("서버 상태", "상태")

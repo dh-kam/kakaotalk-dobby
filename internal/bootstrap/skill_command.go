@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dh-kam/kakao-bot/internal/config"
 	"github.com/dh-kam/kakao-bot/internal/usecase/skill"
@@ -62,9 +63,16 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			runtimeCfg := config.Load()
+
+			aiKey := opts.AIAPIKey
+			if aiKey == "" {
+				aiKey = runtimeCfg.AIAPIKey
+			}
+
 			aiProvider, err := ai.NewProvider(ai.ProviderConfig{
 				ProviderName: opts.AIProvider,
-				APIKey:       opts.AIAPIKey,
+				APIKey:       aiKey,
 				BaseURL:      opts.AIBaseURL,
 				Model:        opts.AIModel,
 			})
@@ -74,15 +82,17 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 
 			// Initialize Agent if Vertex AI or Bedrock is configured
 			var botAgent agent.Agent
-			if cfg.VertexAPIKey != "" {
+			if runtimeCfg.VertexAPIKey != "" {
 				vProvider, err := agent.NewLLMProvider(agent.ProviderOptions{
 					ProviderName: "vertex",
 					Model:        "gemini-3.7-flash",
-					Project:      cfg.VertexProject,
-					Location:     cfg.VertexLocation,
-					APIKey:       cfg.VertexAPIKey,
+					Project:      runtimeCfg.VertexProject,
+					Location:     runtimeCfg.VertexLocation,
+					APIKey:       runtimeCfg.VertexAPIKey,
 				})
-				if err == nil {
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠️ Failed to init Vertex provider: %v\n", err)
+				} else {
 					registry := agent.NewToolRegistry()
 					registry.Register(&agent.ServerStatusTool{})
 

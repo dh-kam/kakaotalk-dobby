@@ -91,7 +91,7 @@ func Load() *AppConfig {
 		AIModel:            os.Getenv("AI_MODEL"),
 		AISystemPrompt:     os.Getenv("AI_SYSTEM_PROMPT"),
 		VertexAPIKey:       os.Getenv("VERTEX_API_KEY"),
-		VertexProject:      os.Getenv("VERTEX_PROJECT"),
+		VertexProject:      vertexProject,
 		VertexLocation:     vertexLocation,
 		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
 		BedrockRegion:      bedrockRegion,
