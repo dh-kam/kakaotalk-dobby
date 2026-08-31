@@ -1,40 +1,39 @@
 #!/usr/bin/env bash
 #
 # Build and push the kakao-bot Docker image to a private repository in the
-# Oracle Cloud Infrastructure Registry (OCIR).
+# Oracle Cloud Infrastructure Registry (OCIR) for ARM64 deployment on a2.oci.0xc0de1ab.dev.
 #
 # Configuration is read from environment variables, falling back to the .env
 # file at the repository root:
 #
-#   OCI_REGION             OCI region code, e.g. ap-seoul-1
-#   OCI_TENANCY_NAMESPACE  Tenancy object storage namespace
-#   OCI_USERNAME           Oracle Cloud username; federated users use
-#                          oracleidentitycloudservice/<email>
-#   OCI_AUTH_TOKEN         OCI auth token (not the account password)
-#   OCI_REGISTRY           Optional registry endpoint override
-#                          (default: <OCI_REGION>.ocir.io)
+#   OCI_REGISTRY           Registry endpoint (default: icn.ocir.io)
+#   OCI_TENANCY_NAMESPACE  Tenancy namespace (default: cnywk2t2q7tb)
+#   OCI_USERNAME           Oracle Cloud username (e.g. oracleidentitycloudservice/dh.kam)
+#   OCI_AUTH_TOKEN         OCI auth token
 #   IMAGE_REPOSITORY       Repository name in OCIR (default: kakao-bot)
-#   IMAGE_TAG              Image tag (default: git describe --always --dirty)
-#   PLATFORMS              Target platforms, comma separated
-#                          (default: native platform; multi-arch requires
-#                          "push", which publishes the manifest directly)
+#   IMAGE_TAG              Image tag (default: YYYYMMDD-HHMMSS-arm64)
+#   PLATFORMS              Target platform (default: linux/arm64)
 #
 # Usage:
 #   ./tools/manage.sh login            Authenticate to OCIR
-#   ./tools/manage.sh build [tag]      Build the image locally
-#   ./tools/manage.sh push [tag]       Build and push to OCIR
+#   ./tools/manage.sh build [tag]      Build the ARM64 image locally
+#   ./tools/manage.sh push [tag]       Build and push ARM64 image to OCIR
+#   ./tools/manage.sh release [tag]    Run release build and push to OCIR
+#
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+OCI_REGISTRY="${OCI_REGISTRY:-icn.ocir.io}"
+OCI_TENANCY_NAMESPACE="${OCI_TENANCY_NAMESPACE:-cnywk2t2q7tb}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-kakao-bot}"
-PLATFORMS="${PLATFORMS:-}"
+PLATFORMS="${PLATFORMS:-linux/arm64}"
 BUILDER_NAME="kakaobot-builder"
 
 die() {
-    echo "error: $*" >&2
+    echo "ERROR: $*" >&2
     exit 1
 }
 
@@ -73,100 +72,90 @@ git_version() {
     git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev
 }
 
-native_platform() {
-    docker version --format '{{.Server.Os}}/{{.Server.Arch}}'
-}
-
-resolve_registry() {
-    if [[ -z "${OCI_REGISTRY:-}" ]]; then
-        require_vars OCI_REGION
-        OCI_REGISTRY="${OCI_REGION}.ocir.io"
-    fi
-}
-
 resolve_image_ref() {
-    resolve_registry
-    require_vars OCI_TENANCY_NAMESPACE
     IMAGE_REF="$OCI_REGISTRY/$OCI_TENANCY_NAMESPACE/$IMAGE_REPOSITORY"
 }
 
 resolve_version() {
-    VERSION="${1:-${IMAGE_TAG:-}}"
-    VERSION="${VERSION:-$(git_version)}"
-}
-
-is_multi_platform() {
-    [[ "$PLATFORMS" == *,* ]]
+    if [[ -n "${1:-}" ]]; then
+        VERSION="$1"
+    elif [[ -n "${IMAGE_TAG:-}" ]]; then
+        VERSION="$IMAGE_TAG"
+    else
+        VERSION="$(date +%Y%m%d-%H%M%S)-arm64"
+    fi
 }
 
 ensure_builder() {
-    docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1 ||
+    if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
         docker buildx create --name "$BUILDER_NAME" --driver docker-container --bootstrap
+    fi
 }
 
 build_args() {
+    local arch="${PLATFORMS#linux/}"
     printf '%s\n' \
         --build-arg "VERSION=$VERSION" \
         --build-arg "COMMIT=$(git_commit)" \
-        --build-arg "DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        --build-arg "DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --build-arg "TARGETOS=linux" \
+        --build-arg "TARGETARCH=${arch:-arm64}"
 }
 
 cmd_login() {
-    resolve_registry
-    require_vars OCI_TENANCY_NAMESPACE OCI_USERNAME OCI_AUTH_TOKEN
+    require_vars OCI_USERNAME OCI_AUTH_TOKEN
 
     printf '%s' "$OCI_AUTH_TOKEN" | docker login "$OCI_REGISTRY" \
         --username "$OCI_TENANCY_NAMESPACE/$OCI_USERNAME" \
         --password-stdin
-    echo "Logged in to $OCI_REGISTRY"
+    echo "✅ Logged in to $OCI_REGISTRY"
 }
 
 cmd_build() {
     resolve_image_ref
     resolve_version "${1:-}"
 
-    if is_multi_platform; then
-        die "multi-platform builds (--platform $PLATFORMS) cannot be loaded locally; use: ./tools/manage.sh push"
-    fi
+    echo "🔨 Building Docker image ($PLATFORMS) for $IMAGE_REF:$VERSION..."
 
+    ensure_builder
     docker buildx build \
-        --platform "${PLATFORMS:-$(native_platform)}" \
+        --builder "$BUILDER_NAME" \
+        --platform "$PLATFORMS" \
         $(build_args) \
         --tag "$IMAGE_REF:$VERSION" \
-        --tag "$IMAGE_REF:latest" \
+        --tag "$IMAGE_REF:latest-arm64" \
         --load \
         "$REPO_ROOT"
 
-    echo "Built $IMAGE_REF:$VERSION"
+    echo "✅ Built $IMAGE_REF:$VERSION ($PLATFORMS)"
 }
 
 cmd_push() {
     resolve_image_ref
     resolve_version "${1:-}"
 
-    if is_multi_platform; then
-        ensure_builder
-        docker buildx build \
-            --builder "$BUILDER_NAME" \
-            --platform "$PLATFORMS" \
-            $(build_args) \
-            --tag "$IMAGE_REF:$VERSION" \
-            --tag "$IMAGE_REF:latest" \
-            --push \
-            "$REPO_ROOT"
-    else
-        docker buildx build \
-            --platform "${PLATFORMS:-$(native_platform)}" \
-            $(build_args) \
-            --tag "$IMAGE_REF:$VERSION" \
-            --tag "$IMAGE_REF:latest" \
-            --load \
-            "$REPO_ROOT"
-        docker push "$IMAGE_REF:$VERSION"
-        docker push "$IMAGE_REF:latest"
-    fi
+    echo "🚀 Building and pushing Docker image ($PLATFORMS) to $IMAGE_REF:$VERSION..."
 
-    echo "Pushed $IMAGE_REF:$VERSION"
+    ensure_builder
+    docker buildx build \
+        --builder "$BUILDER_NAME" \
+        --platform "$PLATFORMS" \
+        $(build_args) \
+        --tag "$IMAGE_REF:$VERSION" \
+        --tag "$IMAGE_REF:latest-arm64" \
+        --push \
+        "$REPO_ROOT"
+
+    echo "✅ Pushed $IMAGE_REF:$VERSION to OCIR"
+}
+
+cmd_release() {
+    resolve_version "${1:-}"
+
+    echo "📦 Building standalone release binary for linux-arm64..."
+    make -C "$REPO_ROOT" linux-arm64-release
+
+    cmd_push "$VERSION"
 }
 
 usage() {
@@ -183,6 +172,7 @@ main() {
         login) cmd_login "$@" ;;
         build) cmd_build "$@" ;;
         push) cmd_push "$@" ;;
+        release) cmd_release "$@" ;;
         help | -h | --help) usage ;;
         *) usage; die "unknown command: $cmd" ;;
     esac
