@@ -43,7 +43,7 @@ func NewBedrockProvider(cfg BedrockConfig) LLMProvider {
 	}
 	modelID := cfg.ModelID
 	if modelID == "" {
-		modelID = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+		modelID = "amazon.nova-pro-v1:0"
 	}
 	client := cfg.HTTPClient
 	if client == nil {
