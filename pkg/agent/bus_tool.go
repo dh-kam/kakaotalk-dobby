@@ -24,7 +24,7 @@ func (t *BusScheduleTool) Name() string {
 }
 
 func (t *BusScheduleTool) Description() string {
-	return "Lookup academy shuttle bus departure and boarding schedules by academy name (e.g. 정상어학원, 강의하는아이들), boarding stop location (e.g. 우미린2차, 양포도서관, 해마루초), vehicle number (e.g. 2호차), or class time."
+	return "Lookup academy shuttle bus departure and boarding schedules by academy name (e.g. 정상어학원, 강의하는아이들), boarding stop location (e.g. 우미린2차/우미린더스카이, 양포도서관, 해마루초), vehicle number (e.g. 2호차), or class time. Note: '우미린더스카이' and '더스카이' refer to '우미린2차'."
 }
 
 func (t *BusScheduleTool) ParametersSchema() map[string]interface{} {
@@ -37,7 +37,7 @@ func (t *BusScheduleTool) ParametersSchema() map[string]interface{} {
 			},
 			"location": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional boarding stop or apartment name (e.g. '우미린2차', '양포도서관', '해마루초', '현진', '이편한').",
+				"description": "Optional boarding stop or apartment name (e.g. '우미린2차', '우미린더스카이', '양포도서관', '해마루초', '현진', '이편한'). Note: '우미린더스카이' and '더스카이' refer to '우미린2차'.",
 			},
 			"class_time": map[string]interface{}{
 				"type":        "string",

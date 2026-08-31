@@ -20,6 +20,7 @@ type ClassInfo struct {
 type StopInfo struct {
 	Sequence         int               `json:"sequence"`
 	Location         string            `json:"location"`
+	Aliases          []string          `json:"aliases,omitempty"`
 	Highlighted      bool              `json:"highlighted,omitempty"`
 	Note             string            `json:"note,omitempty"`
 	Schedules        map[string]string `json:"schedules"`
@@ -157,7 +158,7 @@ func (s *Service) Search(q SearchQuery) []MatchResult {
 		}
 
 		for _, stop := range sched.Stops {
-			if locationQ != "" && !s.matchLocation(stop.Location, locationQ) {
+			if locationQ != "" && !s.matchStopLocation(stop, locationQ) {
 				continue
 			}
 
@@ -221,8 +222,27 @@ func (s *Service) matchAcademy(meta AcademyMetadata, q string) bool {
 	return false
 }
 
-func (s *Service) matchLocation(loc, q string) bool {
-	cleanLoc := strings.ReplaceAll(strings.ToLower(loc), " ", "")
+func (s *Service) matchStopLocation(stop StopInfo, q string) bool {
+	cleanLoc := strings.ReplaceAll(strings.ToLower(stop.Location), " ", "")
 	cleanQ := strings.ReplaceAll(strings.ToLower(q), " ", "")
-	return strings.Contains(cleanLoc, cleanQ)
+
+	if strings.Contains(cleanLoc, cleanQ) {
+		return true
+	}
+	for _, alias := range stop.Aliases {
+		cleanAlias := strings.ReplaceAll(strings.ToLower(alias), " ", "")
+		if strings.Contains(cleanAlias, cleanQ) || strings.Contains(cleanQ, cleanAlias) {
+			return true
+		}
+	}
+
+	// Canonical apartment aliases
+	if (cleanQ == "우미린더스카이" || cleanQ == "더스카이" || cleanQ == "센트럴파크") && strings.Contains(cleanLoc, "우미린2차") {
+		return true
+	}
+	if (cleanQ == "우미린풀하우스" || cleanQ == "풀하우스") && strings.Contains(cleanLoc, "우미린1차") {
+		return true
+	}
+
+	return false
 }
