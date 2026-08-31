@@ -55,10 +55,12 @@ func (a *defaultAgent) Run(ctx context.Context, input string) (*AgentResult, err
 	var steps []AgentStep
 	var totalUsage TokenUsage
 
+	dynamicPrompt := BuildDynamicSystemPrompt(a.systemPrompt)
+
 	for iteration := 1; iteration <= a.maxIterations; iteration++ {
 		req := ToolCompletionRequest{
 			CompletionRequest: CompletionRequest{
-				SystemPrompt: a.systemPrompt,
+				SystemPrompt: dynamicPrompt,
 				Messages:     messages,
 			},
 			Tools: toolDefs,

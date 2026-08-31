@@ -290,7 +290,7 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 
 		if aiProvider != nil {
 			aiResp, err := aiProvider.GenerateResponse(aiCtx, ai.CompletionRequest{
-				SystemPrompt: systemPrompt,
+				SystemPrompt: agent.BuildDynamicSystemPrompt(systemPrompt),
 				Messages: []ai.ChatMessage{
 					{Role: "user", Content: utterance},
 				},
