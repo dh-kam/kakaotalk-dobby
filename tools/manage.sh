@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 #
-# Build and push the kakao-bot Docker image to a private repository in the
-# Oracle Cloud Infrastructure Registry (OCIR) for ARM64 deployment on a2.oci.0xc0de1ab.dev.
+# Build, push, and deploy the kakao-bot Docker image to OCIR and Kubernetes.
 #
-# Configuration is read from environment variables, falling back to the .env
-# file at the repository root:
+# Configuration is read from environment variables or .env at repo root:
 #
 #   OCI_REGISTRY           Registry endpoint (default: icn.ocir.io)
 #   OCI_TENANCY_NAMESPACE  Tenancy namespace (default: cnywk2t2q7tb)
-#   OCI_USERNAME           Oracle Cloud username (e.g. oracleidentitycloudservice/dh.kam)
+#   OCI_USERNAME           Oracle Cloud username
 #   OCI_AUTH_TOKEN         OCI auth token
 #   IMAGE_REPOSITORY       Repository name in OCIR (default: kakao-bot)
 #   IMAGE_TAG              Image tag (default: YYYYMMDD-HHMMSS-arm64)
 #   PLATFORMS              Target platform (default: linux/arm64)
+#   ANSIBLE_DIR            Ansible project directory (default: /workspace/ansible)
 #
 # Usage:
 #   ./tools/manage.sh login            Authenticate to OCIR
 #   ./tools/manage.sh build [tag]      Build the ARM64 image locally
 #   ./tools/manage.sh push [tag]       Build and push ARM64 image to OCIR
-#   ./tools/manage.sh release [tag]    Run release build and push to OCIR
+#   ./tools/manage.sh deploy [tag]     Build, push to OCIR, and deploy to K8s via Ansible
+#   ./tools/manage.sh release [tag]    Run Go release cross-compile, push to OCIR & deploy
 #
 
 set -euo pipefail
@@ -31,6 +31,7 @@ OCI_TENANCY_NAMESPACE="${OCI_TENANCY_NAMESPACE:-cnywk2t2q7tb}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-kakao-bot}"
 PLATFORMS="${PLATFORMS:-linux/arm64}"
 BUILDER_NAME="kakaobot-builder"
+ANSIBLE_DIR="${ANSIBLE_DIR:-/workspace/ansible}"
 
 die() {
     echo "ERROR: $*" >&2
@@ -149,13 +150,55 @@ cmd_push() {
     echo "✅ Pushed $IMAGE_REF:$VERSION to OCIR"
 }
 
+cmd_deploy() {
+    resolve_version "${1:-}"
+    cmd_push "$VERSION"
+
+    echo "☸️ Deploying kakao-bot ($IMAGE_REF:$VERSION) to Kubernetes via Ansible..."
+    [[ -d "$ANSIBLE_DIR" ]] || die "ansible directory not found: $ANSIBLE_DIR"
+
+    local ansible_cmd
+    if command -v ansible-playbook >/dev/null 2>&1; then
+        ansible_cmd="ansible-playbook"
+    else
+        ansible_cmd="uvx --from ansible-core --with kubernetes --with pyyaml ansible-playbook"
+    fi
+
+    (
+        cd "$ANSIBLE_DIR"
+        $ansible_cmd \
+            -i inventory/oci-a2-cilium.site.ini \
+            playbooks/0400.cluster/0416.kakao-bot.yaml \
+            -e "kakao_bot_image=$IMAGE_REF:$VERSION"
+    )
+
+    echo "🔍 Validating public live endpoint https://webhook.0xc0de1ab.dev/kakao/dobby/healthz..."
+    local code="000"
+    for _ in {1..10}; do
+        code="$(curl -s -o /dev/null -w "%{http_code}" https://webhook.0xc0de1ab.dev/kakao/dobby/healthz || true)"
+        if [[ "$code" == "200" ]]; then
+            break
+        fi
+        sleep 2
+    done
+
+    if [[ "$code" == "200" ]]; then
+        echo "🎉 Deployment successful and live! (Status: $code)"
+        echo "   - Skill URL:    https://webhook.0xc0de1ab.dev/kakao/dobby/skill"
+        echo "   - Callback:     https://webhook.0xc0de1ab.dev/kakao/dobby/callback"
+        echo "   - Health Check:  https://webhook.0xc0de1ab.dev/kakao/dobby/healthz"
+    else
+        echo "⚠️ Endpoint returned HTTP $code"
+    fi
+}
+
 cmd_release() {
     resolve_version "${1:-}"
 
     echo "📦 Building standalone release binary for linux-arm64..."
     make -C "$REPO_ROOT" linux-arm64-release
 
-    cmd_push "$VERSION"
+    cmd_deploy "$VERSION"
 }
 
 usage() {
@@ -172,6 +215,7 @@ main() {
         login) cmd_login "$@" ;;
         build) cmd_build "$@" ;;
         push) cmd_push "$@" ;;
+        deploy) cmd_deploy "$@" ;;
         release) cmd_release "$@" ;;
         help | -h | --help) usage ;;
         *) usage; die "unknown command: $cmd" ;;
