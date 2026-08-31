@@ -129,7 +129,9 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					registry.Register(agent.NewBusScheduleTool(busSvc))
 					registry.Register(agent.NewScheduleNotificationTool(schedEngine))
 					registry.Register(agent.NewListSchedulesTool(schedEngine))
+					registry.Register(agent.NewUpdateScheduleTool(schedEngine))
 					registry.Register(agent.NewCancelScheduleTool(schedEngine))
+					registry.Register(agent.NewDeleteScheduleTool(schedEngine))
 
 					botAgent = agent.NewAgent(agent.AgentConfig{
 						Provider:      vProvider,

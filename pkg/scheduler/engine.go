@@ -284,6 +284,84 @@ func (e *Engine) CancelJob(id string) error {
 	return nil
 }
 
+// UpdateJob updates an existing job and re-arms its timer/cron runner.
+func (e *Engine) UpdateJob(id string, update JobUpdate) (*Job, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	job, err := e.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stop and remove existing schedule triggers
+	if timer, ok := e.timerMap[id]; ok {
+		timer.Stop()
+		delete(e.timerMap, id)
+	}
+	if entryID, ok := e.entryMap[id]; ok {
+		e.cronRunner.Remove(entryID)
+		delete(e.entryMap, id)
+	}
+
+	// Apply updates
+	if update.Title != nil {
+		job.Title = *update.Title
+	}
+	if update.Message != nil {
+		job.Message = *update.Message
+	}
+	if update.ExecuteAt != nil {
+		job.ExecuteAt = *update.ExecuteAt
+		job.Type = ScheduleTypeOnce
+		job.CronExpr = ""
+	}
+	if update.CronExpr != nil {
+		job.CronExpr = *update.CronExpr
+		job.Type = ScheduleTypeRecurring
+	}
+	if update.Status != nil {
+		job.Status = *update.Status
+	}
+
+	// Re-arm schedule if active
+	if job.Status == JobStatusActive && e.running {
+		if job.Type == ScheduleTypeOnce {
+			if job.ExecuteAt.After(time.Now().In(e.loc)) {
+				e.scheduleTimer(job)
+			} else {
+				job.Status = JobStatusCompleted
+			}
+		} else if job.Type == ScheduleTypeRecurring {
+			if err := e.scheduleCron(job); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := e.store.Save(job); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// DeleteJob permanently removes a job from scheduler and store.
+func (e *Engine) DeleteJob(id string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if timer, ok := e.timerMap[id]; ok {
+		timer.Stop()
+		delete(e.timerMap, id)
+	}
+	if entryID, ok := e.entryMap[id]; ok {
+		e.cronRunner.Remove(entryID)
+		delete(e.entryMap, id)
+	}
+
+	return e.store.Delete(id)
+}
+
 // ListJobs returns all jobs, optionally filtered by user ID.
 func (e *Engine) ListJobs(userID string) []*Job {
 	jobs, err := e.store.List()
@@ -308,3 +386,4 @@ func (e *Engine) ListJobs(userID string) []*Job {
 func (e *Engine) GetJob(id string) (*Job, error) {
 	return e.store.Get(id)
 }
+

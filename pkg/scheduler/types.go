@@ -38,5 +38,14 @@ type Job struct {
 	Payload     map[string]string `json:"payload,omitempty"`
 }
 
+// JobUpdate specifies fields to modify on an existing job.
+type JobUpdate struct {
+	Title     *string
+	Message   *string
+	ExecuteAt *time.Time
+	CronExpr  *string
+	Status    *JobStatus
+}
+
 // Handler handles the execution of a scheduled job (e.g. sending a Kakao notification).
 type Handler func(ctx context.Context, job *Job) error

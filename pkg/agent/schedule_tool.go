@@ -212,6 +212,155 @@ func (t *CancelScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 	return fmt.Sprintf("✅ 스케줄 ID %s 가 성공적으로 취소되었습니다.", args.JobID), nil
 }
 
+// UpdateScheduleTool allows the Agent to modify an existing schedule.
+type UpdateScheduleTool struct {
+	engine *scheduler.Engine
+}
+
+func NewUpdateScheduleTool(engine *scheduler.Engine) *UpdateScheduleTool {
+	return &UpdateScheduleTool{engine: engine}
+}
+
+func (t *UpdateScheduleTool) Name() string {
+	return "update_schedule"
+}
+
+func (t *UpdateScheduleTool) Description() string {
+	return "Update an existing schedule's title, message, execution time, or cron expression by its Job ID."
+}
+
+func (t *UpdateScheduleTool) ParametersSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"job_id": map[string]interface{}{
+				"type":        "string",
+				"description": "The Job ID of the schedule to update.",
+			},
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional new title.",
+			},
+			"message": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional new message body.",
+			},
+			"execute_at": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional new execution timestamp (e.g. '+20m', '15:30', '2026-09-01 16:00:00').",
+			},
+			"cron_expr": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional new cron expression (e.g. '0 16 * * 1-5').",
+			},
+		},
+		"required": []string{"job_id"},
+	}
+}
+
+func (t *UpdateScheduleTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if t.engine == nil {
+		return "", fmt.Errorf("scheduler engine is not configured")
+	}
+
+	var args struct {
+		JobID     string  `json:"job_id"`
+		Title     *string `json:"title"`
+		Message   *string `json:"message"`
+		ExecuteAt *string `json:"execute_at"`
+		CronExpr  *string `json:"cron_expr"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("invalid args JSON: %w", err)
+	}
+
+	if strings.TrimSpace(args.JobID) == "" {
+		return "", fmt.Errorf("job_id is required")
+	}
+
+	update := scheduler.JobUpdate{
+		Title:   args.Title,
+		Message: args.Message,
+	}
+
+	loc := t.engine.Location()
+	if loc == nil {
+		loc = time.Local
+	}
+
+	if args.ExecuteAt != nil && *args.ExecuteAt != "" {
+		execTime, err := parseExecuteTime(*args.ExecuteAt, loc)
+		if err != nil {
+			return fmt.Sprintf("Error parsing new execution time: %v", err), nil
+		}
+		update.ExecuteAt = &execTime
+	}
+
+	if args.CronExpr != nil && *args.CronExpr != "" {
+		update.CronExpr = args.CronExpr
+	}
+
+	job, err := t.engine.UpdateJob(args.JobID, update)
+	if err != nil {
+		return fmt.Sprintf("Error updating schedule %s: %v", args.JobID, err), nil
+	}
+
+	return fmt.Sprintf("✅ 스케줄 ID %s 가 성공적으로 수정되었습니다.\n- 제목: %s\n- 메시지: %s", job.ID, job.Title, job.Message), nil
+}
+
+// DeleteScheduleTool allows the Agent to permanently delete a schedule.
+type DeleteScheduleTool struct {
+	engine *scheduler.Engine
+}
+
+func NewDeleteScheduleTool(engine *scheduler.Engine) *DeleteScheduleTool {
+	return &DeleteScheduleTool{engine: engine}
+}
+
+func (t *DeleteScheduleTool) Name() string {
+	return "delete_schedule"
+}
+
+func (t *DeleteScheduleTool) Description() string {
+	return "Permanently delete a scheduled notification by its Job ID."
+}
+
+func (t *DeleteScheduleTool) ParametersSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"job_id": map[string]interface{}{
+				"type":        "string",
+				"description": "The Job ID of the schedule to permanently delete.",
+			},
+		},
+		"required": []string{"job_id"},
+	}
+}
+
+func (t *DeleteScheduleTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if t.engine == nil {
+		return "", fmt.Errorf("scheduler engine is not configured")
+	}
+
+	var args struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("invalid args JSON: %w", err)
+	}
+
+	if strings.TrimSpace(args.JobID) == "" {
+		return "", fmt.Errorf("job_id is required")
+	}
+
+	if err := t.engine.DeleteJob(args.JobID); err != nil {
+		return fmt.Sprintf("Error deleting schedule %s: %v", args.JobID, err), nil
+	}
+
+	return fmt.Sprintf("✅ 스케줄 ID %s 가 영구 삭제되었습니다.", args.JobID), nil
+}
+
 func parseExecuteTime(input string, loc *time.Location) (time.Time, error) {
 	input = strings.TrimSpace(input)
 	now := time.Now().In(loc)

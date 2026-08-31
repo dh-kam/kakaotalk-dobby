@@ -90,3 +90,35 @@ func TestScheduler_FileStorePersistence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, JobStatusCompleted, savedJob.Status)
 }
+
+func TestScheduler_UpdateAndDelete(t *testing.T) {
+	store := NewMemoryStore()
+	engine := NewEngine(store, func(ctx context.Context, job *Job) error {
+		return nil
+	})
+	require.NoError(t, engine.Start(context.Background()))
+	defer engine.Stop()
+
+	// 1. Create
+	execTime := time.Now().Add(1 * time.Hour)
+	job, err := engine.ScheduleOnce("user1", "원본 제목", "원본 메시지", execTime, nil)
+	require.NoError(t, err)
+
+	// 2. Update Title & Message
+	newTitle := "수정된 제목"
+	newMsg := "수정된 메시지"
+	updated, err := engine.UpdateJob(job.ID, JobUpdate{
+		Title:   &newTitle,
+		Message: &newMsg,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "수정된 제목", updated.Title)
+	assert.Equal(t, "수정된 메시지", updated.Message)
+
+	// 3. Delete
+	err = engine.DeleteJob(job.ID)
+	require.NoError(t, err)
+
+	_, err = engine.GetJob(job.ID)
+	assert.ErrorIs(t, err, ErrJobNotFound)
+}
