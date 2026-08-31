@@ -59,9 +59,17 @@ func Load() *AppConfig {
 		}
 	}
 
+	vertexProject := os.Getenv("VERTEX_PROJECT")
+	if vertexProject == "" {
+		vertexProject = os.Getenv("GCP_PROJECT")
+	}
+	if vertexProject == "" {
+		vertexProject = "c0de1ab-dev-494714"
+	}
+
 	vertexLocation := os.Getenv("VERTEX_LOCATION")
 	if vertexLocation == "" {
-		vertexLocation = "us-central1"
+		vertexLocation = "global"
 	}
 
 	bedrockRegion := os.Getenv("AWS_REGION")

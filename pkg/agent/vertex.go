@@ -257,6 +257,10 @@ func (p *vertexProvider) buildEndpoint() string {
 	if p.apiKey != "" && p.project == "" {
 		return fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", p.model, p.apiKey)
 	}
+	if p.location == "global" || p.location == "" {
+		return fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:generateContent",
+			p.project, p.model)
+	}
 	return fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:generateContent",
 		p.location, p.project, p.location, p.model)
 }
