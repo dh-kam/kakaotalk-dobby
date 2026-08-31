@@ -18,12 +18,19 @@ vendor/
 
 # Local env / credentials
 .env
+.env.local
+*.local.env
 
 # Local token / credentials file
 tokens.json
 .config/
+data/jobs.json
 
-# IDE / Editor files
+# Logs
+*.log
+
+# System & IDE files
+.DS_Store
 .vscode/
 .idea/
 *.swp

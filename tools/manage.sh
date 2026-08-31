@@ -28,10 +28,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 OCI_REGISTRY="${OCI_REGISTRY:-icn.ocir.io}"
 OCI_TENANCY_NAMESPACE="${OCI_TENANCY_NAMESPACE:-cnywk2t2q7tb}"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-kakao-bot}"
+IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-kakaotalk-dobby}"
 PLATFORMS="${PLATFORMS:-linux/arm64}"
-BUILDER_NAME="kakaobot-builder"
-ANSIBLE_DIR="${ANSIBLE_DIR:-/workspace/ansible}"
+BUILDER_NAME="kakaotalk-dobby-builder"
+ANSIBLE_DIR="${ANSIBLE_DIR:-$(cd "${REPO_ROOT}/../ansible" 2>/dev/null && pwd || echo "/workspace/ansible")}"
 
 die() {
     echo "ERROR: $*" >&2
