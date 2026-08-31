@@ -38,7 +38,11 @@ func (t *CurrentTimeTool) Execute(ctx context.Context, argsJSON string) (string,
 		statusStr = fmt.Sprintf("주말 (%s)", hInfo.Weekday)
 	}
 
+	msg := fmt.Sprintf("현재 대한민국 표준시(KST)는 %d년 %d월 %d일 %s %02d:%02d:%02d (%s)입니다.", now.Year(), now.Month(), now.Day(), hInfo.Weekday, now.Hour(), now.Minute(), now.Second(), statusStr)
+
 	result := map[string]interface{}{
+		"message":          msg,
+		"summary":          msg,
 		"iso8601":          now.Format(time.RFC3339),
 		"formatted":        now.Format("2006-01-02 15:04:05 MST"),
 		"korean_formatted": fmt.Sprintf("%d년 %d월 %d일 %s %02d:%02d:%02d (%s)", now.Year(), now.Month(), now.Day(), hInfo.Weekday, now.Hour(), now.Minute(), now.Second(), statusStr),

@@ -270,6 +270,16 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 				fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
 			} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
 				cleanText := stripMarkdown(strings.TrimSpace(agentRes.Output))
+				var jsonMap map[string]interface{}
+				if err := json.Unmarshal([]byte(cleanText), &jsonMap); err == nil {
+					if msg, ok := jsonMap["message"].(string); ok && msg != "" {
+						cleanText = msg
+					} else if sum, ok := jsonMap["summary"].(string); ok && sum != "" {
+						cleanText = sum
+					} else if kf, ok := jsonMap["korean_formatted"].(string); ok && kf != "" {
+						cleanText = kf
+					}
+				}
 				resp := openbuilder.NewSimpleTextResponse(cleanText)
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("알림 목록", "알림 목록")

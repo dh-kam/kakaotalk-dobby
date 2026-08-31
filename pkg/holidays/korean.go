@@ -2,6 +2,8 @@ package holidays
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -247,17 +249,46 @@ func ParseAndCheck(input string) (HolidayInfo, error) {
 	now := time.Now().In(GetKSTLocation())
 	clean := strings.TrimSpace(input)
 
-	if clean == "" || clean == "오늘" || clean == "today" || clean == "현재" {
+	if clean == "" || clean == "오늘" || clean == "today" || clean == "현재" || strings.Contains(clean, "오늘") {
 		return CheckDate(now), nil
 	}
-	if clean == "내일" || clean == "tomorrow" {
+	if clean == "내일" || clean == "tomorrow" || strings.Contains(clean, "내일") {
 		return CheckDate(now.AddDate(0, 0, 1)), nil
 	}
-	if clean == "모레" {
+	if clean == "모레" || strings.Contains(clean, "모레") {
 		return CheckDate(now.AddDate(0, 0, 2)), nil
 	}
-	if clean == "어제" || clean == "yesterday" {
+	if clean == "글피" || strings.Contains(clean, "글피") {
+		return CheckDate(now.AddDate(0, 0, 3)), nil
+	}
+	if clean == "어제" || clean == "yesterday" || strings.Contains(clean, "어제") {
 		return CheckDate(now.AddDate(0, 0, -1)), nil
+	}
+	if strings.Contains(clean, "이번주 토요일") || strings.Contains(clean, "이번 주 토요일") {
+		offset := (int(time.Saturday) - int(now.Weekday()) + 7) % 7
+		return CheckDate(now.AddDate(0, 0, offset)), nil
+	}
+	if strings.Contains(clean, "이번주 일요일") || strings.Contains(clean, "이번 주 일요일") || strings.Contains(clean, "이번 주말") || strings.Contains(clean, "이번주말") {
+		offset := (int(time.Sunday) - int(now.Weekday()) + 7) % 7
+		return CheckDate(now.AddDate(0, 0, offset)), nil
+	}
+
+	// Natural Korean regex: e.g. "2026년 9월 25일", "9월 25일", "10월 9일"
+	reYMD := regexp.MustCompile(`(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일`)
+	if m := reYMD.FindStringSubmatch(clean); len(m) == 4 {
+		y, _ := strconv.Atoi(m[1])
+		mo, _ := strconv.Atoi(m[2])
+		d, _ := strconv.Atoi(m[3])
+		t := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, GetKSTLocation())
+		return CheckDate(t), nil
+	}
+
+	reMD := regexp.MustCompile(`(\d{1,2})월\s*(\d{1,2})일`)
+	if m := reMD.FindStringSubmatch(clean); len(m) == 3 {
+		mo, _ := strconv.Atoi(m[1])
+		d, _ := strconv.Atoi(m[2])
+		t := time.Date(now.Year(), time.Month(mo), d, 0, 0, 0, 0, GetKSTLocation())
+		return CheckDate(t), nil
 	}
 
 	// Try standard date formats
@@ -281,7 +312,7 @@ func ParseAndCheck(input string) (HolidayInfo, error) {
 		}
 	}
 
-	return HolidayInfo{}, fmt.Errorf("unable to parse date %q (expected YYYY-MM-DD, 오늘, 내일, etc.)", input)
+	return HolidayInfo{}, fmt.Errorf("unable to parse date %q (expected YYYY-MM-DD, 9월 25일, 오늘, 내일, etc.)", input)
 }
 
 // GetUpcomingHolidays returns a list of upcoming Korean holidays starting from a reference date.
