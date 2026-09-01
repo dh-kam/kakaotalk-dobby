@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/internal/config"
 	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/skill"
@@ -169,6 +170,7 @@ Domain Knowledge:
 				Agent:        botAgent,
 				BusService:   busSvc,
 				Scheduler:    schedEngine,
+				SessionStore: agent.NewMemorySessionStore(15*time.Minute, 10),
 				SystemPrompt: opts.AISystemPrompt,
 				Out:          cmd.OutOrStdout(),
 			})

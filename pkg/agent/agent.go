@@ -45,11 +45,18 @@ func (a *defaultAgent) GetProvider() LLMProvider {
 	return a.provider
 }
 
-// Run executes the ReAct reasoning & tool execution loop until completion.
+// Run executes the ReAct reasoning loop without previous history.
 func (a *defaultAgent) Run(ctx context.Context, input string) (*AgentResult, error) {
-	messages := []Message{
-		{Role: "user", Content: input},
+	return a.RunWithHistory(ctx, input, nil)
+}
+
+// RunWithHistory executes the ReAct reasoning loop preserving multi-turn conversation history.
+func (a *defaultAgent) RunWithHistory(ctx context.Context, input string, history []Message) (*AgentResult, error) {
+	var messages []Message
+	if len(history) > 0 {
+		messages = append(messages, history...)
 	}
+	messages = append(messages, Message{Role: "user", Content: input})
 
 	toolDefs := a.tools.GetDefinitions()
 	var steps []AgentStep

@@ -91,4 +91,23 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 	assert.Equal(t, "2.0", aiSkillResp.Version)
 	assert.NotEmpty(t, aiSkillResp.Template.Outputs)
 	assert.Contains(t, aiSkillResp.Template.Outputs[0].SimpleText.Text, "AI Mock Reply")
+
+	// Test Reset Command
+	resetPayload := openbuilder.SkillPayload{
+		UserRequest: openbuilder.UserRequest{
+			Utterance: "대화 초기화",
+			User: openbuilder.ChatUser{
+				ID: "test-user",
+			},
+		},
+	}
+	resetBody, _ := json.Marshal(resetPayload)
+	resetPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(resetBody))
+	require.NoError(t, err)
+	defer resetPostResp.Body.Close()
+
+	var resetSkillResp openbuilder.SkillResponse
+	err = json.NewDecoder(resetPostResp.Body).Decode(&resetSkillResp)
+	require.NoError(t, err)
+	assert.Contains(t, resetSkillResp.Template.Outputs[0].SimpleText.Text, "초기화했습니다")
 }

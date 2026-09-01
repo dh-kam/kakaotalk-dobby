@@ -27,6 +27,7 @@ type Memory interface {
 // Agent represents an autonomous reasoning agent that can think, call tools, and respond.
 type Agent interface {
 	Run(ctx context.Context, input string) (*AgentResult, error)
+	RunWithHistory(ctx context.Context, input string, history []Message) (*AgentResult, error)
 	GetProvider() LLMProvider
 	GetTools() []Tool
 }

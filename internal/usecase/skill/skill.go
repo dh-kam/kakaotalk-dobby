@@ -30,6 +30,7 @@ type SkillServeRequest struct {
 	Agent        agent.Agent
 	BusService   *academy.Service
 	Scheduler    *scheduler.Engine
+	SessionStore agent.SessionStore
 	SystemPrompt string
 	Out          io.Writer
 }
@@ -54,6 +55,11 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 	if req.AIProvider == nil {
 		req.AIProvider = ai.NewMockProvider("default")
+	}
+
+	sessionStore := req.SessionStore
+	if sessionStore == nil {
+		sessionStore = agent.NewMemorySessionStore(15*time.Minute, 10)
 	}
 
 	mux := http.NewServeMux()
@@ -87,7 +93,12 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			utterance = payload.Action.Params["utterance"]
 		}
 
-		respPayload := processUtterance(r.Context(), utterance, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, req.SystemPrompt)
+		userID := payload.UserRequest.User.ID
+		if userID == "" {
+			userID = "anonymous"
+		}
+
+		respPayload := processUtterance(r.Context(), utterance, userID, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -135,8 +146,19 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(ctx context.Context, utterance, channelID string, busSvc *academy.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, systemPrompt string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, userID, channelID string, busSvc *academy.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, sessionStore agent.SessionStore, systemPrompt string) *openbuilder.SkillResponse {
 	text := strings.ToLower(utterance)
+
+	// Conversation Reset Command
+	if text == "대화초기화" || text == "대화 초기화" || text == "리셋" || text == "reset" || text == "처음으로" || text == "기억지워" {
+		if sessionStore != nil {
+			sessionStore.Clear(userID)
+		}
+		resp := openbuilder.NewSimpleTextResponse("🔄 이전 대화 기억을 초기화했습니다. 무엇이든 새로 물어보세요!")
+		resp.AddQuickReply("도움말", "도움말")
+		resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+		return resp
+	}
 
 	switch {
 	// OpenBuilder verification ping / empty test / greeting
@@ -239,12 +261,17 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 		return resp
 
 	default:
-		// 1. Autonomous AI Agent First (LLM Reasoning & Function Calling)
+		// 1. Autonomous AI Agent First (LLM Reasoning & Function Calling with Session Memory)
 		aiCtx, cancel := context.WithTimeout(ctx, 4800*time.Millisecond)
 		defer cancel()
 
+		var history []agent.Message
+		if sessionStore != nil {
+			history = sessionStore.GetHistory(userID)
+		}
+
 		if botAgent != nil {
-			agentRes, err := botAgent.Run(aiCtx, utterance)
+			agentRes, err := botAgent.RunWithHistory(aiCtx, utterance, history)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
 			} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
@@ -276,10 +303,15 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 						cleanText = strings.TrimSpace(sb.String())
 					}
 				}
+
+				if sessionStore != nil {
+					sessionStore.AppendTurn(userID, utterance, cleanText)
+				}
+
 				resp := openbuilder.NewSimpleTextResponse(cleanText)
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("알림 목록", "알림 목록")
-				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+				resp.AddQuickReply("대화 초기화", "대화 초기화")
 				return resp
 			}
 		}
@@ -306,19 +338,27 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 		}
 
 		if aiProvider != nil {
+			var chatMsgs []ai.ChatMessage
+			for _, h := range history {
+				chatMsgs = append(chatMsgs, ai.ChatMessage{Role: h.Role, Content: h.Content})
+			}
+			chatMsgs = append(chatMsgs, ai.ChatMessage{Role: "user", Content: utterance})
+
 			aiResp, err := aiProvider.GenerateResponse(aiCtx, ai.CompletionRequest{
 				SystemPrompt: agent.BuildDynamicSystemPrompt(systemPrompt),
-				Messages: []ai.ChatMessage{
-					{Role: "user", Content: utterance},
-				},
+				Messages:     chatMsgs,
 			})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
 			} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
 				cleanText := stripMarkdown(strings.TrimSpace(aiResp.Text))
+				if sessionStore != nil {
+					sessionStore.AppendTurn(userID, utterance, cleanText)
+				}
 				resp := openbuilder.NewSimpleTextResponse(cleanText)
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("서버 상태", "상태")
+				resp.AddQuickReply("대화 초기화", "대화 초기화")
 				return resp
 			}
 		}
