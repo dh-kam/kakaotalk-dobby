@@ -44,11 +44,18 @@ func NewAuthService(authBaseURL, apiBaseURL, clientID, clientSecret, redirectURI
 }
 
 func (s *authService) GetAuthURL(scopes []string) string {
+	return s.GetAuthURLWithState(scopes, "")
+}
+
+func (s *authService) GetAuthURLWithState(scopes []string, state string) string {
 	u, _ := url.Parse(fmt.Sprintf("%s/oauth/authorize", s.authBaseURL))
 	q := u.Query()
 	q.Set("client_id", s.clientID)
 	q.Set("redirect_uri", s.redirectURI)
 	q.Set("response_type", "code")
+	if state != "" {
+		q.Set("state", state)
+	}
 	if len(scopes) > 0 {
 		q.Set("scope", strings.Join(scopes, ","))
 	}

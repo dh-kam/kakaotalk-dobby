@@ -90,6 +90,9 @@ func (e *Engine) Start(parentCtx context.Context) error {
 	e.cronRunner.Start()
 	e.running = true
 
+	// Auto-prune jobs completed or cancelled more than 7 days ago
+	e.purgeCompletedJobsLocked(7 * 24 * time.Hour)
+
 	// Restore active jobs from store
 	jobs, err := e.store.List()
 	if err != nil {
@@ -444,4 +447,36 @@ func (e *Engine) ListAllJobs() []*Job {
 // GetJob returns a job by ID.
 func (e *Engine) GetJob(id string) (*Job, error) {
 	return e.store.Get(id)
+}
+
+// PurgeCompletedJobs removes completed, cancelled, or failed jobs older than maxAge.
+func (e *Engine) PurgeCompletedJobs(maxAge time.Duration) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.purgeCompletedJobsLocked(maxAge)
+}
+
+func (e *Engine) purgeCompletedJobsLocked(maxAge time.Duration) int {
+	jobs, err := e.store.List()
+	if err != nil {
+		return 0
+	}
+
+	now := time.Now().In(e.loc)
+	purged := 0
+	for _, j := range jobs {
+		if j.Status == JobStatusCompleted || j.Status == JobStatusCancelled || j.Status == JobStatusFailed {
+			refTime := j.CreatedAt
+			if j.LastFiredAt != nil {
+				refTime = *j.LastFiredAt
+			}
+
+			if now.Sub(refTime) > maxAge {
+				if err := e.store.Delete(j.ID); err == nil {
+					purged++
+				}
+			}
+		}
+	}
+	return purged
 }

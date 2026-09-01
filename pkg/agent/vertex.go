@@ -67,6 +67,21 @@ func (p *vertexSDKProvider) Name() string {
 	return "vertex"
 }
 
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.token)
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
 func (p *vertexSDKProvider) getClient(ctx context.Context) (*genai.Client, error) {
 	p.clientMu.Lock()
 	defer p.clientMu.Unlock()
@@ -83,12 +98,26 @@ func (p *vertexSDKProvider) getClient(ctx context.Context) (*genai.Client, error
 		backend = genai.BackendGeminiAPI
 	}
 
+	httpClient := p.httpClient
+	if p.bearerToken != "" {
+		base := http.DefaultTransport
+		if httpClient != nil && httpClient.Transport != nil {
+			base = httpClient.Transport
+		}
+		httpClient = &http.Client{
+			Transport: &bearerTransport{
+				token: p.bearerToken,
+				base:  base,
+			},
+		}
+	}
+
 	clientCfg := &genai.ClientConfig{
 		APIKey:     p.apiKey,
 		Project:    p.project,
 		Location:   p.location,
 		Backend:    backend,
-		HTTPClient: p.httpClient,
+		HTTPClient: httpClient,
 	}
 	if p.customBaseURL != "" {
 		clientCfg.HTTPOptions.BaseURL = p.customBaseURL

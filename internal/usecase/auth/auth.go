@@ -3,14 +3,18 @@ package auth
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
@@ -41,60 +45,43 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 		out = os.Stdout
 	}
 
-	if req.ClientID == "" {
-		return fmt.Errorf("client ID (REST API Key) is required")
-	}
-	if req.RedirectURI == "" {
-		req.RedirectURI = "http://localhost:8080/callback"
-	}
-
+	tokenStore := kakao.NewFileTokenStore(req.TokenPath)
 	client := kakao.NewClient(kakao.ClientConfig{
 		ClientID:     req.ClientID,
 		ClientSecret: req.ClientSecret,
 		RedirectURI:  req.RedirectURI,
-		TokenStore:   kakao.NewFileTokenStore(req.TokenPath),
+		TokenStore:   tokenStore,
 	})
 
 	authSvc := client.Auth()
 
-	code := req.Code
-	if code == "" && !req.Manual && strings.HasPrefix(req.RedirectURI, "http://localhost") {
-		var err error
-		code, err = uc.waitForLocalCallback(ctx, authSvc, req)
-		if err != nil {
-			fmt.Fprintf(out, "Local callback listener failed (%v). Switching to manual prompt...\n", err)
-			code = ""
-		}
-	}
-
-	if code == "" {
+	var code string
+	if req.Code != "" {
+		code = req.Code
+	} else if req.Manual {
 		authURL := authSvc.GetAuthURL(req.Scopes)
-		fmt.Fprintln(out, "Please open the following URL in your browser to authorize:")
+		fmt.Fprintln(out, "Please visit the following URL in your browser to authorize:")
 		fmt.Fprintf(out, "\n  %s\n\n", authURL)
-		fmt.Fprint(out, "Enter the authorization code (or full redirect URL): ")
+		fmt.Fprint(out, "Enter the authorization code from the redirect URL: ")
 
 		reader := bufio.NewReader(os.Stdin)
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("read auth code input: %w", err)
+			return fmt.Errorf("read code input: %w", err)
 		}
-		input = strings.TrimSpace(input)
-		if strings.Contains(input, "code=") {
-			parsedURL, err := url.Parse(input)
-			if err == nil {
-				code = parsedURL.Query().Get("code")
-			}
-		}
+		code = strings.TrimSpace(input)
 		if code == "" {
-			code = input
+			return fmt.Errorf("authorization code cannot be empty")
+		}
+	} else {
+		var err error
+		code, err = uc.waitForLocalCallback(ctx, authSvc, req)
+		if err != nil {
+			return fmt.Errorf("local callback: %w", err)
 		}
 	}
 
-	if code == "" {
-		return fmt.Errorf("authorization code is empty")
-	}
-
-	fmt.Fprintln(out, "Exchanging authorization code for tokens...")
+	fmt.Fprintln(out, "Exchanging authorization code for token...")
 	token, err := authSvc.ExchangeCode(ctx, code)
 	if err != nil {
 		return fmt.Errorf("exchange token: %w", err)
@@ -106,6 +93,12 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 
 	fmt.Fprintln(out, "Authentication successful! Token saved to:", req.TokenPath)
 	return nil
+}
+
+func generateCSRFState() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, authSvc kakao.AuthService, req LoginRequest) (string, error) {
@@ -125,10 +118,16 @@ func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, authSvc kakao.
 	}
 	defer listener.Close()
 
+	expectedState := generateCSRFState()
+
 	codeChan := make(chan string, 1)
 	errChan := make(chan error, 1)
+	var once sync.Once
 
 	server := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != u.Path {
 				http.NotFound(w, r)
@@ -136,11 +135,27 @@ func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, authSvc kakao.
 			}
 
 			q := r.URL.Query()
+
+			// CSRF state validation
+			stateParam := q.Get("state")
+			if stateParam != expectedState {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("Invalid CSRF state parameter."))
+				once.Do(func() {
+					errChan <- fmt.Errorf("invalid CSRF state token")
+				})
+				return
+			}
+
 			if errParam := q.Get("error"); errParam != "" {
 				desc := q.Get("error_description")
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(fmt.Sprintf("Kakao Login Error: %s (%s)", errParam, desc)))
-				errChan <- fmt.Errorf("kakao login error: %s (%s)", errParam, desc)
+				escapedErr := html.EscapeString(errParam)
+				escapedDesc := html.EscapeString(desc)
+				_, _ = w.Write([]byte(fmt.Sprintf("Kakao Login Error: %s (%s)", escapedErr, escapedDesc)))
+				once.Do(func() {
+					errChan <- fmt.Errorf("kakao login error: %s (%s)", escapedErr, escapedDesc)
+				})
 				return
 			}
 
@@ -148,24 +163,30 @@ func (uc *LoginUseCase) waitForLocalCallback(ctx context.Context, authSvc kakao.
 			if code == "" {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte("No code parameter found."))
-				errChan <- fmt.Errorf("no authorization code in callback")
+				once.Do(func() {
+					errChan <- fmt.Errorf("no authorization code in callback")
+				})
 				return
 			}
 
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kakao Bot Login</title></head><body style="font-family: sans-serif; text-align: center; padding-top: 50px;"><h2>Authentication Successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>`))
-			codeChan <- code
+			once.Do(func() {
+				codeChan <- code
+			})
 		}),
 	}
 
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errChan <- err
+			once.Do(func() {
+				errChan <- err
+			})
 		}
 	}()
 
-	authURL := authSvc.GetAuthURL(req.Scopes)
+	authURL := authSvc.GetAuthURLWithState(req.Scopes, expectedState)
 	fmt.Fprintln(req.Out, "Opening browser for Kakao authorization...")
 	fmt.Fprintf(req.Out, "\n  %s\n\n", authURL)
 	fmt.Fprintln(req.Out, "Waiting for callback on", req.RedirectURI, "...")

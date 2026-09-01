@@ -15,6 +15,7 @@ type TokenStore interface {
 // AuthService handles authentication, token lifecycle, and account session.
 type AuthService interface {
 	GetAuthURL(scopes []string) string
+	GetAuthURLWithState(scopes []string, state string) string
 	ExchangeCode(ctx context.Context, code string) (*TokenInfo, error)
 	RefreshToken(ctx context.Context, refreshToken string) (*TokenInfo, error)
 	GetAccessTokenInfo(ctx context.Context) (*AccessTokenInfo, error)

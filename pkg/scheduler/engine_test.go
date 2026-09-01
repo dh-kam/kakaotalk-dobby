@@ -179,3 +179,38 @@ func TestScheduler_ConcurrentScheduleAndCancel(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestScheduler_PurgeCompletedJobs(t *testing.T) {
+	store := NewMemoryStore()
+	engine := NewEngine(store, nil)
+	require.NoError(t, engine.Start(context.Background()))
+	defer engine.Stop()
+
+	// Add an old completed job
+	oldJob := &Job{
+		ID:        "old_job_1",
+		UserID:    "user_1",
+		Title:     "Old Job",
+		Status:    JobStatusCompleted,
+		CreatedAt: time.Now().Add(-10 * 24 * time.Hour),
+	}
+	require.NoError(t, store.Save(oldJob))
+
+	// Add an active job
+	activeJob := &Job{
+		ID:        "active_job_1",
+		UserID:    "user_1",
+		Title:     "Active Job",
+		Status:    JobStatusActive,
+		CreatedAt: time.Now().Add(-10 * 24 * time.Hour),
+	}
+	require.NoError(t, store.Save(activeJob))
+
+	purged := engine.PurgeCompletedJobs(7 * 24 * time.Hour)
+	assert.Equal(t, 1, purged)
+
+	jobs, err := store.List()
+	require.NoError(t, err)
+	assert.Len(t, jobs, 1)
+	assert.Equal(t, "active_job_1", jobs[0].ID)
+}
