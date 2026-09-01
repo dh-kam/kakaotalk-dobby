@@ -80,10 +80,26 @@ func (t *BusScheduleTool) Execute(ctx context.Context, argsJSON string) (string,
 			args.Academy, args.Location, args.Vehicle, strings.Join(academies, ", ")), nil
 	}
 
-	resBytes, err := json.MarshalIndent(matches, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal schedule results: %w", err)
+	var sb strings.Builder
+	first := matches[0]
+	sb.WriteString(fmt.Sprintf("🚌 %s %s (%s) 시간표\n\n", first.AcademyName, first.VehicleNumber, first.ScheduleType))
+
+	for _, m := range matches {
+		sb.WriteString(fmt.Sprintf("📍 %s", m.Location))
+		if strings.Contains(m.Location, "우미린2차 정문") {
+			sb.WriteString(" ⭐ (추천 승강장)")
+		}
+		sb.WriteString("\n")
+		for class, t := range m.Times {
+			sb.WriteString(fmt.Sprintf("  • %s: %s\n", class, t))
+		}
+		sb.WriteString("\n")
 	}
 
-	return string(resBytes), nil
+	if first.Contact != "" {
+		sb.WriteString(fmt.Sprintf("📞 차량 문의: %s\n", first.Contact))
+	}
+	sb.WriteString("💡 3분 전까지 승강장에 대기해 주세요.")
+
+	return strings.TrimSpace(sb.String()), nil
 }

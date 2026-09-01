@@ -250,6 +250,7 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 			} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
 				cleanText := stripMarkdown(strings.TrimSpace(agentRes.Output))
 				var jsonMap map[string]interface{}
+				var jsonArr []map[string]interface{}
 				if err := json.Unmarshal([]byte(cleanText), &jsonMap); err == nil {
 					if msg, ok := jsonMap["message"].(string); ok && msg != "" {
 						cleanText = msg
@@ -257,6 +258,22 @@ func processUtterance(ctx context.Context, utterance, channelID string, busSvc *
 						cleanText = sum
 					} else if kf, ok := jsonMap["korean_formatted"].(string); ok && kf != "" {
 						cleanText = kf
+					}
+				} else if err := json.Unmarshal([]byte(cleanText), &jsonArr); err == nil && len(jsonArr) > 0 {
+					var sb strings.Builder
+					for _, item := range jsonArr {
+						loc, _ := item["location"].(string)
+						times, _ := item["times"].(map[string]interface{})
+						if loc != "" {
+							sb.WriteString(fmt.Sprintf("📍 %s\n", loc))
+							for k, v := range times {
+								sb.WriteString(fmt.Sprintf("  • %s: %v\n", k, v))
+							}
+							sb.WriteString("\n")
+						}
+					}
+					if sb.Len() > 0 {
+						cleanText = strings.TrimSpace(sb.String())
 					}
 				}
 				resp := openbuilder.NewSimpleTextResponse(cleanText)
