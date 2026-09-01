@@ -11,6 +11,7 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
 	"github.com/dh-kam/refutils/flagsbinder"
 	"github.com/spf13/cobra"
 )
@@ -85,6 +86,8 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			busSvc := academy.NewService()
 			_ = busSvc.LoadFromDir("data/schedules")
 
+			schoolSvc, _ := school.NewServiceFromFile("data/schedules/2026_6-9_school_timetable.json")
+
 			// Initialize Scheduler Store & Dispatcher
 			var store scheduler.Store
 			fileStore, err := scheduler.NewFileStore("data/jobs.json")
@@ -133,6 +136,9 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					registry.Register(&agent.KoreanHolidayTool{})
 					registry.Register(&agent.ServerStatusTool{})
 					registry.Register(agent.NewBusScheduleTool(busSvc))
+					if schoolSvc != nil {
+						registry.Register(agent.NewSchoolTimetableTool(schoolSvc))
+					}
 					registry.Register(agent.NewScheduleNotificationTool(schedEngine))
 					registry.Register(agent.NewListSchedulesTool(schedEngine))
 					registry.Register(agent.NewUpdateScheduleTool(schedEngine))
@@ -143,13 +149,14 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 						Provider: vProvider,
 						Tools:    registry,
 						SystemPrompt: `You are a helpful, polite KakaoTalk AI assistant for channel @0xc0de1ab.
-You have access to tools for checking current time/date/weekday (get_current_time in KST), checking Korean public holidays/business days (check_korean_holiday), looking up academy bus schedules, managing notifications/reminders, and checking server status.
+You have access to tools for checking current time/date/weekday (get_current_time in KST), checking Korean public holidays/business days (check_korean_holiday), looking up academy bus schedules (get_bus_schedule), looking up elementary school class timetables (get_school_timetable for 2026학년도 6학년 9반), managing notifications/reminders, and checking server status.
 Always answer politely, naturally, and concisely in Korean formatted for mobile screens.
 
 Domain Knowledge:
 - "우미린 2차" (or "우미린2차") is officially also known as "우미린더스카이" or "더스카이" (구미 산동 확장단지 우미린 센트럴파크/더스카이). When users ask about "우미린더스카이" or "더스카이", search for "우미린2차" bus stops.
 - "우미린 1차" is known as "우미린 풀하우스".
-- "정상어학원" shuttle routes serve both "산동옥계 정상어학원" and "강의하는아이들".`,
+- "정상어학원" shuttle routes serve both "산동옥계 정상어학원" and "강의하는아이들".
+- "학교 시간표": 2026학년도 6학년 9반 시간표가 등록되어 있습니다. 오늘 시간표, 요일별 과목, 교시, 하교 시간, 학급 생활 규칙을 물어보면 get_school_timetable 도구를 호출하세요.`,
 						MaxIterations: 3,
 					})
 				}

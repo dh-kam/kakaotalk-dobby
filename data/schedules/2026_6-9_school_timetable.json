@@ -1,0 +1,174 @@
+{
+  "title": "시간표 안내",
+  "school_year": 2026,
+  "grade": 6,
+  "class_number": 9,
+  "description": "2026학년도 6학년 9반 주간 학급 시간표",
+  "note": "※ 매주 상황에 따라 시간표가 변경될 수 있습니다.",
+  "daily_schedule": {
+    "morning_activity": {
+      "name": "아침활동",
+      "start_time": "08:30",
+      "end_time": "09:00",
+      "activity": "독서활동 및 하루 수업 준비하기"
+    },
+    "periods": [
+      {
+        "period": 1,
+        "name": "1교시",
+        "start_time": "08:50",
+        "end_time": "09:30",
+        "duration_minutes": 40
+      },
+      {
+        "period": 2,
+        "name": "2교시",
+        "start_time": "09:40",
+        "end_time": "10:20",
+        "duration_minutes": 40
+      },
+      {
+        "period": 3,
+        "name": "3교시",
+        "start_time": "10:30",
+        "end_time": "11:10",
+        "duration_minutes": 40
+      },
+      {
+        "period": 4,
+        "name": "4교시",
+        "start_time": "11:20",
+        "end_time": "12:00",
+        "duration_minutes": 40
+      },
+      {
+        "period": 5,
+        "name": "5교시",
+        "start_time": "12:00",
+        "end_time": "12:40",
+        "duration_minutes": 40
+      },
+      {
+        "period": null,
+        "name": "점심시간",
+        "start_time": "12:40",
+        "end_time": "13:20",
+        "duration_minutes": 40,
+        "activity": "점심식사"
+      },
+      {
+        "period": 6,
+        "name": "6교시",
+        "start_time": "13:20",
+        "end_time": "14:00",
+        "duration_minutes": 40
+      }
+    ]
+  },
+  "weekly_timetable": {
+    "monday": {
+      "day_name": "월요일",
+      "day_short": "월",
+      "total_periods": 6,
+      "dismissal_time": "14:00",
+      "morning_activity": "독서활동 및 하루 수업 준비하기",
+      "schedule": [
+        { "period": 1, "time": "08:50-09:30", "subject": "국어" },
+        { "period": 2, "time": "09:40-10:20", "subject": "영어" },
+        { "period": 3, "time": "10:30-11:10", "subject": "수학" },
+        { "period": 4, "time": "11:20-12:00", "subject": "사회" },
+        { "period": 5, "time": "12:00-12:40", "subject": "체육" },
+        { "period": null, "time": "12:40-13:20", "subject": "점심식사" },
+        { "period": 6, "time": "13:20-14:00", "subject": "음악" }
+      ]
+    },
+    "tuesday": {
+      "day_name": "화요일",
+      "day_short": "화",
+      "total_periods": 6,
+      "dismissal_time": "14:00",
+      "morning_activity": "독서활동 및 하루 수업 준비하기",
+      "schedule": [
+        { "period": 1, "time": "08:50-09:30", "subject": "보건" },
+        { "period": 2, "time": "09:40-10:20", "subject": "실과" },
+        { "period": 3, "time": "10:30-11:10", "subject": "영어" },
+        { "period": 4, "time": "11:20-12:00", "subject": "국어" },
+        { "period": 5, "time": "12:00-12:40", "subject": "수학" },
+        { "period": null, "time": "12:40-13:20", "subject": "점심식사" },
+        { "period": 6, "time": "13:20-14:00", "subject": "창체" }
+      ]
+    },
+    "wednesday": {
+      "day_name": "수요일",
+      "day_short": "수",
+      "total_periods": 5,
+      "dismissal_time": "13:20",
+      "morning_activity": "독서활동 및 하루 수업 준비하기",
+      "schedule": [
+        { "period": 1, "time": "08:50-09:30", "subject": "도덕" },
+        { "period": 2, "time": "09:40-10:20", "subject": "국어" },
+        { "period": 3, "time": "10:30-11:10", "subject": "과학" },
+        { "period": 4, "time": "11:20-12:00", "subject": "과학" },
+        { "period": 5, "time": "12:00-12:40", "subject": "사회" },
+        { "period": null, "time": "12:40-13:20", "subject": "점심식사 (급식 후 하교)" }
+      ]
+    },
+    "thursday": {
+      "day_name": "목요일",
+      "day_short": "목",
+      "total_periods": 6,
+      "dismissal_time": "14:00",
+      "morning_activity": "독서활동 및 하루 수업 준비하기",
+      "schedule": [
+        { "period": 1, "time": "08:50-09:30", "subject": "국어" },
+        { "period": 2, "time": "09:40-10:20", "subject": "영어" },
+        { "period": 3, "time": "10:30-11:10", "subject": "수학" },
+        { "period": 4, "time": "11:20-12:00", "subject": "사회" },
+        { "period": 5, "time": "12:00-12:40", "subject": "음악" },
+        { "period": null, "time": "12:40-13:20", "subject": "점심식사" },
+        { "period": 6, "time": "13:20-14:00", "subject": "창체" }
+      ]
+    },
+    "friday": {
+      "day_name": "금요일",
+      "day_short": "금",
+      "total_periods": 6,
+      "dismissal_time": "14:00",
+      "morning_activity": "독서활동 및 하루 수업 준비하기",
+      "schedule": [
+        { "period": 1, "time": "08:50-09:30", "subject": "과학" },
+        { "period": 2, "time": "09:40-10:20", "subject": "실과" },
+        { "period": 3, "time": "10:30-11:10", "subject": "국어" },
+        { "period": 4, "time": "11:20-12:00", "subject": "체육" },
+        { "period": 5, "time": "12:00-12:40", "subject": "미술" },
+        { "period": null, "time": "12:40-13:20", "subject": "점심식사" },
+        { "period": 6, "time": "13:20-14:00", "subject": "미술" }
+      ]
+    }
+  },
+  "subject_summary": {
+    "total_weekly_hours": 28,
+    "hours_by_subject": {
+      "국어": 4,
+      "수학": 3,
+      "영어": 3,
+      "사회": 3,
+      "과학": 3,
+      "체육": 2,
+      "음악": 2,
+      "미술": 2,
+      "실과": 2,
+      "창체": 2,
+      "도덕": 1,
+      "보건": 1
+    }
+  },
+  "class_rules": {
+    "title": "우리반이 지켜야 할 하루 생활 규칙",
+    "rules": [
+      "등교 후에는 독서를 준비합니다. (읽을 책 1권씩 가지고 다니기)",
+      "쉬는 시간에 해야 할 일은 화장실 다녀오기, 물 마시기, 다음 수업 준비하기입니다.",
+      "수업을 마친 후에는 바로 집(학원)으로 갑니다."
+    ]
+  }
+}
