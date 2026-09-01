@@ -111,14 +111,17 @@ func (p *geminiProvider) GenerateResponse(ctx context.Context, req CompletionReq
 		return nil, fmt.Errorf("marshal gemini request: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		url.PathEscape(model), url.QueryEscape(p.apiKey))
+	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent",
+		url.PathEscape(model))
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create gemini request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		httpReq.Header.Set("x-goog-api-key", p.apiKey)
+	}
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {

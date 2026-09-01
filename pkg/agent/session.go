@@ -13,8 +13,9 @@ type CompactorFunc func(messages []Message) string
 // SessionStoreConfig defines parameters for conversation memory management.
 type SessionStoreConfig struct {
 	TTL         time.Duration // If <= 0, sessions never expire based on time (persistent in-memory)
-	MaxMessages int           // Threshold turns before compaction (default 50)
-	CompactTo   int           // Number of turns after compaction (default 5)
+	MaxSessions int           // Maximum concurrent sessions before LRU eviction (default 1000)
+	MaxMessages int           // Threshold messages before compaction (default 50)
+	CompactTo   int           // Number of messages after compaction (default 5)
 	Compactor   CompactorFunc
 }
 
@@ -29,6 +30,7 @@ type SessionStore interface {
 type memorySessionStore struct {
 	mu          sync.RWMutex
 	ttl         time.Duration
+	maxSessions int
 	maxMessages int
 	compactTo   int
 	compactor   CompactorFunc
@@ -40,28 +42,40 @@ type sessionData struct {
 	messages   []Message
 }
 
-// NewMemorySessionStore creates an in-memory session manager with persistent memory (no TTL expiration), max 50 turns, and compact to 5 turns.
+const (
+	defaultMaxSessions   = 1000
+	defaultMaxMessages   = 50
+	defaultCompactTo     = 5
+	maxMessageRuneLength = 8000
+)
+
+// NewMemorySessionStore creates an in-memory session manager with persistent memory (no TTL expiration), max 50 messages, and compact to 5 messages.
 func NewMemorySessionStore(maxMessages int) SessionStore {
 	if maxMessages <= 0 {
-		maxMessages = 50
+		maxMessages = defaultMaxMessages
 	}
 	return NewMemorySessionStoreWithConfig(SessionStoreConfig{
 		TTL:         0, // No time-based expiration
+		MaxSessions: defaultMaxSessions,
 		MaxMessages: maxMessages,
-		CompactTo:   5,
+		CompactTo:   defaultCompactTo,
 	})
 }
 
 // NewMemorySessionStoreWithConfig creates a session store with full configuration.
 func NewMemorySessionStoreWithConfig(cfg SessionStoreConfig) SessionStore {
+	if cfg.MaxSessions <= 0 {
+		cfg.MaxSessions = defaultMaxSessions
+	}
 	if cfg.MaxMessages <= 0 {
-		cfg.MaxMessages = 50
+		cfg.MaxMessages = defaultMaxMessages
 	}
 	if cfg.CompactTo <= 0 || cfg.CompactTo >= cfg.MaxMessages {
-		cfg.CompactTo = 5
+		cfg.CompactTo = defaultCompactTo
 	}
 	return &memorySessionStore{
 		ttl:         cfg.TTL,
+		maxSessions: cfg.MaxSessions,
 		maxMessages: cfg.MaxMessages,
 		compactTo:   cfg.CompactTo,
 		compactor:   cfg.Compactor,
@@ -102,6 +116,14 @@ func (s *memorySessionStore) GetHistory(sessionID string) []Message {
 	return out
 }
 
+func sanitizeMessageContent(content string) string {
+	runes := []rune(content)
+	if len(runes) > maxMessageRuneLength {
+		return string(runes[:maxMessageRuneLength]) + " (truncated)"
+	}
+	return content
+}
+
 func (s *memorySessionStore) AppendTurn(sessionID string, userMsg string, assistantMsg string) {
 	if sessionID == "" || (userMsg == "" && assistantMsg == "") {
 		return
@@ -114,6 +136,11 @@ func (s *memorySessionStore) AppendTurn(sessionID string, userMsg string, assist
 
 	sess, exists := s.sessions[sessionID]
 	if !exists {
+		// Enforce LRU eviction if maximum sessions reached
+		if len(s.sessions) >= s.maxSessions {
+			s.evictLRULocked()
+		}
+
 		sess = &sessionData{
 			lastActive: time.Now(),
 			messages:   make([]Message, 0, s.maxMessages),
@@ -126,20 +153,38 @@ func (s *memorySessionStore) AppendTurn(sessionID string, userMsg string, assist
 	if userMsg != "" {
 		sess.messages = append(sess.messages, Message{
 			Role:    "user",
-			Content: userMsg,
+			Content: sanitizeMessageContent(userMsg),
 		})
 	}
 
 	if assistantMsg != "" {
 		sess.messages = append(sess.messages, Message{
 			Role:    "assistant",
-			Content: assistantMsg,
+			Content: sanitizeMessageContent(assistantMsg),
 		})
 	}
 
-	// Trigger compaction if messages exceed max threshold (50 turns -> 5 turns)
+	// Trigger compaction if messages exceed max threshold (50 -> 5)
 	if len(sess.messages) > s.maxMessages {
 		s.compactSessionLocked(sess)
+	}
+}
+
+func (s *memorySessionStore) evictLRULocked() {
+	var oldestID string
+	var oldestTime time.Time
+
+	first := true
+	for id, sess := range s.sessions {
+		if first || sess.lastActive.Before(oldestTime) {
+			oldestTime = sess.lastActive
+			oldestID = id
+			first = false
+		}
+	}
+
+	if oldestID != "" {
+		delete(s.sessions, oldestID)
 	}
 }
 
@@ -182,8 +227,9 @@ func defaultCompactor(messages []Message) string {
 	for _, m := range messages {
 		if m.Role == "user" && m.Content != "" {
 			trimmed := strings.TrimSpace(m.Content)
-			if len(trimmed) > 40 {
-				trimmed = trimmed[:40] + "..."
+			runes := []rune(trimmed)
+			if len(runes) > 40 {
+				trimmed = string(runes[:40]) + "..."
 			}
 			userTopics = append(userTopics, trimmed)
 		}

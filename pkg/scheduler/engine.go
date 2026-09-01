@@ -60,6 +60,10 @@ func NewEngine(store Store, handler Handler, opts ...EngineOption) *Engine {
 		cron.WithParser(cron.NewParser(
 			cron.SecondOptional|cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
 		)),
+		cron.WithChain(
+			cron.Recover(cron.DefaultLogger),
+			cron.SkipIfStillRunning(cron.DefaultLogger),
+		),
 	)
 
 	return e
@@ -73,15 +77,18 @@ func (e *Engine) Location() *time.Location {
 // Start boots the scheduler engine and restores active jobs.
 func (e *Engine) Start(parentCtx context.Context) error {
 	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.running {
-		e.mu.Unlock()
 		return nil
 	}
 
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
 	e.ctx, e.cancel = context.WithCancel(parentCtx)
 	e.cronRunner.Start()
 	e.running = true
-	e.mu.Unlock()
 
 	// Restore active jobs from store
 	jobs, err := e.store.List()
@@ -97,14 +104,14 @@ func (e *Engine) Start(parentCtx context.Context) error {
 
 		if job.Type == ScheduleTypeOnce {
 			if job.ExecuteAt.Before(now) {
-				// Mark missed jobs as completed or missed
+				// Mark missed past jobs as completed
 				job.Status = JobStatusCompleted
 				_ = e.store.Save(job)
 				continue
 			}
-			e.scheduleTimer(job)
+			e.scheduleTimerLocked(job)
 		} else if job.Type == ScheduleTypeRecurring {
-			_ = e.scheduleCron(job)
+			_ = e.scheduleCronLocked(job)
 		}
 	}
 
@@ -114,17 +121,14 @@ func (e *Engine) Start(parentCtx context.Context) error {
 // Stop terminates the scheduler engine.
 func (e *Engine) Stop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	if !e.running {
+		e.mu.Unlock()
 		return
 	}
 
 	if e.cancel != nil {
 		e.cancel()
 	}
-	ctx := e.cronRunner.Stop()
-	<-ctx.Done()
 
 	for _, timer := range e.timerMap {
 		timer.Stop()
@@ -132,6 +136,14 @@ func (e *Engine) Stop() {
 	e.timerMap = make(map[string]*time.Timer)
 	e.entryMap = make(map[string]cron.EntryID)
 	e.running = false
+	cronRunner := e.cronRunner
+	e.mu.Unlock()
+
+	// Wait for cron stop outside the mutex lock to prevent deadlocks
+	if cronRunner != nil {
+		ctx := cronRunner.Stop()
+		<-ctx.Done()
+	}
 }
 
 // ScheduleOnce creates and schedules a one-time notification.
@@ -161,11 +173,11 @@ func (e *Engine) ScheduleOnce(userID, title, message string, executeAt time.Time
 
 	e.mu.Lock()
 	if e.running {
-		e.scheduleTimer(job)
+		e.scheduleTimerLocked(job)
 	}
 	e.mu.Unlock()
 
-	return job, nil
+	return job.Clone(), nil
 }
 
 // ScheduleRecurring creates and schedules a recurring cron notification.
@@ -190,7 +202,7 @@ func (e *Engine) ScheduleRecurring(userID, title, message string, cronExpr strin
 
 	e.mu.Lock()
 	if e.running {
-		if err := e.scheduleCron(job); err != nil {
+		if err := e.scheduleCronLocked(job); err != nil {
 			e.mu.Unlock()
 			job.Status = JobStatusFailed
 			_ = e.store.Save(job)
@@ -199,10 +211,10 @@ func (e *Engine) ScheduleRecurring(userID, title, message string, cronExpr strin
 	}
 	e.mu.Unlock()
 
-	return job, nil
+	return job.Clone(), nil
 }
 
-func (e *Engine) scheduleTimer(job *Job) {
+func (e *Engine) scheduleTimerLocked(job *Job) {
 	delay := time.Until(job.ExecuteAt)
 	if delay < 0 {
 		delay = 0
@@ -216,7 +228,7 @@ func (e *Engine) scheduleTimer(job *Job) {
 	e.timerMap[jobID] = timer
 }
 
-func (e *Engine) scheduleCron(job *Job) error {
+func (e *Engine) scheduleCronLocked(job *Job) error {
 	jobID := job.ID
 	entryID, err := e.cronRunner.AddFunc(job.CronExpr, func() {
 		e.executeJob(jobID)
@@ -230,6 +242,13 @@ func (e *Engine) scheduleCron(job *Job) error {
 }
 
 func (e *Engine) executeJob(jobID string) {
+	e.mu.Lock()
+	if timer, ok := e.timerMap[jobID]; ok {
+		timer.Stop()
+		delete(e.timerMap, jobID)
+	}
+	e.mu.Unlock()
+
 	job, err := e.store.Get(jobID)
 	if err != nil || job.Status != JobStatusActive {
 		return
@@ -240,15 +259,15 @@ func (e *Engine) executeJob(jobID string) {
 
 	if job.Type == ScheduleTypeOnce {
 		job.Status = JobStatusCompleted
-		e.mu.Lock()
-		delete(e.timerMap, jobID)
-		e.mu.Unlock()
 	}
 
 	_ = e.store.Save(job)
 
 	if e.handler != nil {
+		e.mu.RLock()
 		ctx := e.ctx
+		e.mu.RUnlock()
+
 		if ctx == nil {
 			ctx = context.Background()
 		}
@@ -258,14 +277,20 @@ func (e *Engine) executeJob(jobID string) {
 	}
 }
 
-// CancelJob cancels a scheduled job.
-func (e *Engine) CancelJob(id string) error {
+// CancelJob cancels a scheduled job. If ownerUserID is provided, it verifies ownership.
+func (e *Engine) CancelJob(id string, ownerUserID ...string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	job, err := e.store.Get(id)
 	if err != nil {
 		return err
+	}
+
+	if len(ownerUserID) > 0 && ownerUserID[0] != "" {
+		if job.UserID != "" && !strings.EqualFold(job.UserID, ownerUserID[0]) {
+			return fmt.Errorf("permission denied: job %s belongs to another user", id)
+		}
 	}
 
 	job.Status = JobStatusCancelled
@@ -284,14 +309,20 @@ func (e *Engine) CancelJob(id string) error {
 	return nil
 }
 
-// UpdateJob updates an existing job and re-arms its timer/cron runner.
-func (e *Engine) UpdateJob(id string, update JobUpdate) (*Job, error) {
+// UpdateJob updates an existing job and re-arms its timer/cron runner. If ownerUserID is provided, it verifies ownership.
+func (e *Engine) UpdateJob(id string, update JobUpdate, ownerUserID ...string) (*Job, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	job, err := e.store.Get(id)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(ownerUserID) > 0 && ownerUserID[0] != "" {
+		if job.UserID != "" && !strings.EqualFold(job.UserID, ownerUserID[0]) {
+			return nil, fmt.Errorf("permission denied: job %s belongs to another user", id)
+		}
 	}
 
 	// Stop and remove existing schedule triggers
@@ -328,12 +359,12 @@ func (e *Engine) UpdateJob(id string, update JobUpdate) (*Job, error) {
 	if job.Status == JobStatusActive && e.running {
 		if job.Type == ScheduleTypeOnce {
 			if job.ExecuteAt.After(time.Now().In(e.loc)) {
-				e.scheduleTimer(job)
+				e.scheduleTimerLocked(job)
 			} else {
 				job.Status = JobStatusCompleted
 			}
 		} else if job.Type == ScheduleTypeRecurring {
-			if err := e.scheduleCron(job); err != nil {
+			if err := e.scheduleCronLocked(job); err != nil {
 				return nil, err
 			}
 		}
@@ -342,13 +373,24 @@ func (e *Engine) UpdateJob(id string, update JobUpdate) (*Job, error) {
 	if err := e.store.Save(job); err != nil {
 		return nil, err
 	}
-	return job, nil
+	return job.Clone(), nil
 }
 
-// DeleteJob permanently removes a job from scheduler and store.
-func (e *Engine) DeleteJob(id string) error {
+// DeleteJob permanently removes a job from scheduler and store. If ownerUserID is provided, it verifies ownership.
+func (e *Engine) DeleteJob(id string, ownerUserID ...string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	job, err := e.store.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if len(ownerUserID) > 0 && ownerUserID[0] != "" {
+		if job.UserID != "" && !strings.EqualFold(job.UserID, ownerUserID[0]) {
+			return fmt.Errorf("permission denied: job %s belongs to another user", id)
+		}
+	}
 
 	if timer, ok := e.timerMap[id]; ok {
 		timer.Stop()
@@ -362,28 +404,44 @@ func (e *Engine) DeleteJob(id string) error {
 	return e.store.Delete(id)
 }
 
-// ListJobs returns all jobs, optionally filtered by user ID.
+// ListJobs returns jobs filtered by user ID. If userID is empty or "*", it returns all jobs.
 func (e *Engine) ListJobs(userID string) []*Job {
 	jobs, err := e.store.List()
 	if err != nil {
 		return nil
 	}
 
-	if userID == "" {
-		return jobs
+	if userID == "" || userID == "*" {
+		list := make([]*Job, 0, len(jobs))
+		for _, j := range jobs {
+			list = append(list, j.Clone())
+		}
+		return list
 	}
 
 	filtered := make([]*Job, 0)
 	for _, j := range jobs {
-		if j.UserID == "" || strings.EqualFold(j.UserID, userID) {
-			filtered = append(filtered, j)
+		if strings.EqualFold(j.UserID, userID) {
+			filtered = append(filtered, j.Clone())
 		}
 	}
 	return filtered
+}
+
+// ListAllJobs returns all jobs without user filter (for administrative / internal inspection).
+func (e *Engine) ListAllJobs() []*Job {
+	jobs, err := e.store.List()
+	if err != nil {
+		return nil
+	}
+	list := make([]*Job, 0, len(jobs))
+	for _, j := range jobs {
+		list = append(list, j.Clone())
+	}
+	return list
 }
 
 // GetJob returns a job by ID.
 func (e *Engine) GetJob(id string) (*Job, error) {
 	return e.store.Get(id)
 }
-

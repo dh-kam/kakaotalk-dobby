@@ -38,6 +38,25 @@ type Job struct {
 	Payload     map[string]string `json:"payload,omitempty"`
 }
 
+// Clone returns a deep copy of Job.
+func (j *Job) Clone() *Job {
+	if j == nil {
+		return nil
+	}
+	cp := *j
+	if j.LastFiredAt != nil {
+		t := *j.LastFiredAt
+		cp.LastFiredAt = &t
+	}
+	if j.Payload != nil {
+		cp.Payload = make(map[string]string, len(j.Payload))
+		for k, v := range j.Payload {
+			cp.Payload[k] = v
+		}
+	}
+	return &cp
+}
+
 // JobUpdate specifies fields to modify on an existing job.
 type JobUpdate struct {
 	Title     *string

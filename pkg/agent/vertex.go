@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"sync"
+
 	"github.com/samber/lo"
 	"google.golang.org/genai"
 )
@@ -19,7 +21,9 @@ type vertexSDKProvider struct {
 	bearerToken   string
 	customBaseURL string
 	httpClient    *http.Client
+	clientMu      sync.Mutex
 	client        *genai.Client
+	clientErr     error
 }
 
 // VertexConfig holds configuration for Google Cloud Vertex AI.
@@ -64,8 +68,14 @@ func (p *vertexSDKProvider) Name() string {
 }
 
 func (p *vertexSDKProvider) getClient(ctx context.Context) (*genai.Client, error) {
+	p.clientMu.Lock()
+	defer p.clientMu.Unlock()
+
 	if p.client != nil {
 		return p.client, nil
+	}
+	if p.clientErr != nil {
+		return nil, p.clientErr
 	}
 
 	backend := genai.BackendVertexAI
@@ -86,7 +96,8 @@ func (p *vertexSDKProvider) getClient(ctx context.Context) (*genai.Client, error
 
 	client, err := genai.NewClient(ctx, clientCfg)
 	if err != nil {
-		return nil, fmt.Errorf("init google genai client: %w", err)
+		p.clientErr = fmt.Errorf("init google genai client: %w", err)
+		return nil, p.clientErr
 	}
 	p.client = client
 	return p.client, nil

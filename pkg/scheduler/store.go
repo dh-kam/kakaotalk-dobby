@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var (
@@ -35,9 +36,12 @@ func NewMemoryStore() *MemoryStore {
 }
 
 func (s *MemoryStore) Save(job *Job) error {
+	if job == nil {
+		return errors.New("job cannot be nil")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.jobs[job.ID] = job
+	s.jobs[job.ID] = job.Clone()
 	return nil
 }
 
@@ -55,7 +59,7 @@ func (s *MemoryStore) Get(id string) (*Job, error) {
 	if !ok {
 		return nil, ErrJobNotFound
 	}
-	return job, nil
+	return job.Clone(), nil
 }
 
 func (s *MemoryStore) List() ([]*Job, error) {
@@ -63,7 +67,7 @@ func (s *MemoryStore) List() ([]*Job, error) {
 	defer s.mu.RUnlock()
 	list := make([]*Job, 0, len(s.jobs))
 	for _, j := range s.jobs {
-		list = append(list, j)
+		list = append(list, j.Clone())
 	}
 	return list, nil
 }
@@ -104,23 +108,25 @@ func (s *FileStore) load() error {
 	defer s.mu.Unlock()
 	s.jobs = make(map[string]*Job, len(list))
 	for _, j := range list {
-		s.jobs[j.ID] = j
+		if j != nil && j.ID != "" {
+			s.jobs[j.ID] = j.Clone()
+		}
 	}
 
 	return nil
 }
 
-func (s *FileStore) persist() error {
+func (s *FileStore) persistLocked(targetJobs map[string]*Job) error {
 	dir := filepath.Dir(s.filePath)
 	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
 
-	list := make([]*Job, 0, len(s.jobs))
-	for _, j := range s.jobs {
-		list = append(list, j)
+	list := make([]*Job, 0, len(targetJobs))
+	for _, j := range targetJobs {
+		list = append(list, j.Clone())
 	}
 
 	data, err := json.MarshalIndent(list, "", "  ")
@@ -128,26 +134,80 @@ func (s *FileStore) persist() error {
 		return fmt.Errorf("marshal jobs: %w", err)
 	}
 
-	tmpFile := s.filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	tmpFile := fmt.Sprintf("%s.tmp.%d", s.filePath, time.Now().UnixNano())
+	f, err := os.OpenFile(tmpFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("create tmp file %s: %w", tmpFile, err)
+	}
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("write tmp file %s: %w", tmpFile, err)
 	}
 
-	return os.Rename(tmpFile, s.filePath)
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("sync tmp file %s: %w", tmpFile, err)
+	}
+
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("close tmp file %s: %w", tmpFile, err)
+	}
+
+	if err := os.Rename(tmpFile, s.filePath); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("rename tmp file to %s: %w", s.filePath, err)
+	}
+
+	return nil
 }
 
 func (s *FileStore) Save(job *Job) error {
+	if job == nil {
+		return errors.New("job cannot be nil")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.jobs[job.ID] = job
-	return s.persist()
+
+	// Clone target map state
+	targetJobs := make(map[string]*Job, len(s.jobs)+1)
+	for k, v := range s.jobs {
+		targetJobs[k] = v.Clone()
+	}
+	targetJobs[job.ID] = job.Clone()
+
+	if err := s.persistLocked(targetJobs); err != nil {
+		return err
+	}
+
+	s.jobs = targetJobs
+	return nil
 }
 
 func (s *FileStore) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.jobs, id)
-	return s.persist()
+
+	if _, ok := s.jobs[id]; !ok {
+		return nil
+	}
+
+	targetJobs := make(map[string]*Job, len(s.jobs))
+	for k, v := range s.jobs {
+		if k != id {
+			targetJobs[k] = v.Clone()
+		}
+	}
+
+	if err := s.persistLocked(targetJobs); err != nil {
+		return err
+	}
+
+	s.jobs = targetJobs
+	return nil
 }
 
 func (s *FileStore) Get(id string) (*Job, error) {
@@ -157,7 +217,7 @@ func (s *FileStore) Get(id string) (*Job, error) {
 	if !ok {
 		return nil, ErrJobNotFound
 	}
-	return job, nil
+	return job.Clone(), nil
 }
 
 func (s *FileStore) List() ([]*Job, error) {
@@ -165,7 +225,7 @@ func (s *FileStore) List() ([]*Job, error) {
 	defer s.mu.RUnlock()
 	list := make([]*Job, 0, len(s.jobs))
 	for _, j := range s.jobs {
-		list = append(list, j)
+		list = append(list, j.Clone())
 	}
 	return list, nil
 }

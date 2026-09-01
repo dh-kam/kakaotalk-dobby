@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestScheduler_OnceAndCancel(t *testing.T) {
 	job2, err := engine.ScheduleOnce("user1", "취소될 알림", "내용", execTime2, nil)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CancelJob(job2.ID))
+	require.NoError(t, engine.CancelJob(job2.ID, "user1"))
 	time.Sleep(250 * time.Millisecond)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&firedCount), "Cancelled job should not fire")
 }
@@ -110,15 +111,71 @@ func TestScheduler_UpdateAndDelete(t *testing.T) {
 	updated, err := engine.UpdateJob(job.ID, JobUpdate{
 		Title:   &newTitle,
 		Message: &newMsg,
-	})
+	}, "user1")
 	require.NoError(t, err)
 	assert.Equal(t, "수정된 제목", updated.Title)
 	assert.Equal(t, "수정된 메시지", updated.Message)
 
-	// 3. Delete
-	err = engine.DeleteJob(job.ID)
+	// Unauthorized update should fail
+	_, err = engine.UpdateJob(job.ID, JobUpdate{Title: &newTitle}, "user_other")
+	assert.Error(t, err)
+
+	// Unauthorized delete should fail
+	err = engine.DeleteJob(job.ID, "user_other")
+	assert.Error(t, err)
+
+	// 3. Authorized Delete
+	err = engine.DeleteJob(job.ID, "user1")
 	require.NoError(t, err)
 
 	_, err = engine.GetJob(job.ID)
 	assert.ErrorIs(t, err, ErrJobNotFound)
+}
+
+func TestScheduler_MultiTenantIsolation(t *testing.T) {
+	store := NewMemoryStore()
+	engine := NewEngine(store, nil)
+	require.NoError(t, engine.Start(context.Background()))
+	defer engine.Stop()
+
+	execTime := time.Now().Add(1 * time.Hour)
+	_, err := engine.ScheduleOnce("user_alice", "Alice Job", "Msg", execTime, nil)
+	require.NoError(t, err)
+
+	_, err = engine.ScheduleOnce("user_bob", "Bob Job", "Msg", execTime, nil)
+	require.NoError(t, err)
+
+	aliceJobs := engine.ListJobs("user_alice")
+	assert.Len(t, aliceJobs, 1)
+	assert.Equal(t, "Alice Job", aliceJobs[0].Title)
+
+	bobJobs := engine.ListJobs("user_bob")
+	assert.Len(t, bobJobs, 1)
+	assert.Equal(t, "Bob Job", bobJobs[0].Title)
+
+	allJobs := engine.ListAllJobs()
+	assert.Len(t, allJobs, 2)
+}
+
+func TestScheduler_ConcurrentScheduleAndCancel(t *testing.T) {
+	store := NewMemoryStore()
+	engine := NewEngine(store, func(ctx context.Context, job *Job) error {
+		return nil
+	})
+	require.NoError(t, engine.Start(context.Background()))
+	defer engine.Stop()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			execTime := time.Now().Add(50 * time.Millisecond)
+			job, err := engine.ScheduleOnce("concurrent_user", "Title", "Msg", execTime, nil)
+			if err == nil && idx%2 == 0 {
+				_ = engine.CancelJob(job.ID, "concurrent_user")
+			}
+		}(i)
+	}
+	wg.Wait()
 }

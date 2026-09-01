@@ -11,6 +11,28 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
 )
 
+type contextKey string
+
+const (
+	userIDContextKey contextKey = "user_id"
+)
+
+// WithUserID returns a child context with the specified UserID attached.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDContextKey, userID)
+}
+
+// UserIDFromContext retrieves the UserID from the context.
+func UserIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(userIDContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // ScheduleNotificationTool allows the AI Agent to register reminders and notifications.
 type ScheduleNotificationTool struct {
 	engine *scheduler.Engine
@@ -60,8 +82,16 @@ func (t *ScheduleNotificationTool) ParametersSchema() map[string]interface{} {
 }
 
 func (t *ScheduleNotificationTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context cancelled before schedule execution: %w", err)
+	}
 	if t.engine == nil {
 		return "", fmt.Errorf("scheduler engine is not configured")
+	}
+
+	userID := UserIDFromContext(ctx)
+	if userID == "" {
+		userID = "kakao_user"
 	}
 
 	var args struct {
@@ -86,7 +116,7 @@ func (t *ScheduleNotificationTool) Execute(ctx context.Context, argsJSON string)
 		if cronExpr == "" {
 			return "", fmt.Errorf("cron_expr is required for recurring schedule")
 		}
-		job, err := t.engine.ScheduleRecurring("kakao_user", args.Title, args.Message, cronExpr, nil)
+		job, err := t.engine.ScheduleRecurring(userID, args.Title, args.Message, cronExpr, nil)
 		if err != nil {
 			return fmt.Sprintf("Error creating recurring schedule: %v", err), nil
 		}
@@ -100,7 +130,7 @@ func (t *ScheduleNotificationTool) Execute(ctx context.Context, argsJSON string)
 		return fmt.Sprintf("Error parsing execution time %q: %v", args.ExecuteAt, err), nil
 	}
 
-	job, err := t.engine.ScheduleOnce("kakao_user", args.Title, args.Message, execTime, nil)
+	job, err := t.engine.ScheduleOnce(userID, args.Title, args.Message, execTime, nil)
 	if err != nil {
 		return fmt.Sprintf("Error creating schedule: %v", err), nil
 	}
@@ -109,7 +139,7 @@ func (t *ScheduleNotificationTool) Execute(ctx context.Context, argsJSON string)
 		job.ID, job.Title, job.ExecuteAt.Format("2006-01-02 15:04:05"), job.Message), nil
 }
 
-// ListSchedulesTool allows the Agent to list registered schedules.
+// ListSchedulesTool allows the Agent to list registered schedules for the current user.
 type ListSchedulesTool struct {
 	engine *scheduler.Engine
 }
@@ -123,7 +153,7 @@ func (t *ListSchedulesTool) Name() string {
 }
 
 func (t *ListSchedulesTool) Description() string {
-	return "List all active, pending, or completed notification schedules."
+	return "List all active, pending, or completed notification schedules for the current user."
 }
 
 func (t *ListSchedulesTool) ParametersSchema() map[string]interface{} {
@@ -138,7 +168,8 @@ func (t *ListSchedulesTool) Execute(ctx context.Context, argsJSON string) (strin
 		return "", fmt.Errorf("scheduler engine is not configured")
 	}
 
-	jobs := t.engine.ListJobs("")
+	userID := UserIDFromContext(ctx)
+	jobs := t.engine.ListJobs(userID)
 	if len(jobs) == 0 {
 		return "현재 등록된 스케줄 및 알림이 없습니다.", nil
 	}
@@ -159,7 +190,7 @@ func (t *ListSchedulesTool) Execute(ctx context.Context, argsJSON string) (strin
 	return strings.TrimSpace(sb.String()), nil
 }
 
-// CancelScheduleTool allows the Agent to cancel a scheduled notification.
+// CancelScheduleTool allows the Agent to cancel a scheduled notification owned by the current user.
 type CancelScheduleTool struct {
 	engine *scheduler.Engine
 }
@@ -190,6 +221,9 @@ func (t *CancelScheduleTool) ParametersSchema() map[string]interface{} {
 }
 
 func (t *CancelScheduleTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context cancelled before cancel execution: %w", err)
+	}
 	if t.engine == nil {
 		return "", fmt.Errorf("scheduler engine is not configured")
 	}
@@ -205,14 +239,15 @@ func (t *CancelScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 		return "", fmt.Errorf("job_id is required")
 	}
 
-	if err := t.engine.CancelJob(args.JobID); err != nil {
+	userID := UserIDFromContext(ctx)
+	if err := t.engine.CancelJob(args.JobID, userID); err != nil {
 		return fmt.Sprintf("Error cancelling schedule %s: %v", args.JobID, err), nil
 	}
 
 	return fmt.Sprintf("✅ 스케줄 ID %s 가 성공적으로 취소되었습니다.", args.JobID), nil
 }
 
-// UpdateScheduleTool allows the Agent to modify an existing schedule.
+// UpdateScheduleTool allows the Agent to modify an existing schedule owned by the current user.
 type UpdateScheduleTool struct {
 	engine *scheduler.Engine
 }
@@ -259,6 +294,9 @@ func (t *UpdateScheduleTool) ParametersSchema() map[string]interface{} {
 }
 
 func (t *UpdateScheduleTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context cancelled before update execution: %w", err)
+	}
 	if t.engine == nil {
 		return "", fmt.Errorf("scheduler engine is not configured")
 	}
@@ -300,7 +338,8 @@ func (t *UpdateScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 		update.CronExpr = args.CronExpr
 	}
 
-	job, err := t.engine.UpdateJob(args.JobID, update)
+	userID := UserIDFromContext(ctx)
+	job, err := t.engine.UpdateJob(args.JobID, update, userID)
 	if err != nil {
 		return fmt.Sprintf("Error updating schedule %s: %v", args.JobID, err), nil
 	}
@@ -308,7 +347,7 @@ func (t *UpdateScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 	return fmt.Sprintf("✅ 스케줄 ID %s 가 성공적으로 수정되었습니다.\n- 제목: %s\n- 메시지: %s", job.ID, job.Title, job.Message), nil
 }
 
-// DeleteScheduleTool allows the Agent to permanently delete a schedule.
+// DeleteScheduleTool allows the Agent to permanently delete a schedule owned by the current user.
 type DeleteScheduleTool struct {
 	engine *scheduler.Engine
 }
@@ -339,6 +378,9 @@ func (t *DeleteScheduleTool) ParametersSchema() map[string]interface{} {
 }
 
 func (t *DeleteScheduleTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context cancelled before delete execution: %w", err)
+	}
 	if t.engine == nil {
 		return "", fmt.Errorf("scheduler engine is not configured")
 	}
@@ -354,7 +396,8 @@ func (t *DeleteScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 		return "", fmt.Errorf("job_id is required")
 	}
 
-	if err := t.engine.DeleteJob(args.JobID); err != nil {
+	userID := UserIDFromContext(ctx)
+	if err := t.engine.DeleteJob(args.JobID, userID); err != nil {
 		return fmt.Sprintf("Error deleting schedule %s: %v", args.JobID, err), nil
 	}
 

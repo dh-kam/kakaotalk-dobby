@@ -100,7 +100,7 @@ $(OS_ARCH_PAIRS):
 	@$(MAKE) $(call all_for_os_arch,$(call token1,$(@F)),$(call token2,$(@F)))
 
 $(OS_VARIANT_PAIRS):
-	@$(MAKE) $(call all_for_os_variant,$(call token1,$(@F)),$(call token3,$(@F)))
+	@$(MAKE) $(call all_for_os_variant,$(call token1,$(@F)),$(call token2,$(@F)))
 
 $(ARCH_VARIANT_PAIRS):
 	@$(MAKE) $(call all_for_arch_variant,$(call token1,$(@F)),$(call token2,$(@F)))

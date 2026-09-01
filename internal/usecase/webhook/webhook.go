@@ -141,6 +141,11 @@ func (uc *ServeUseCase) Execute(ctx context.Context, req ServeRequest) error {
 	fmt.Fprintf(out, "Starting Kakao webhook server on %s...\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Webhook POST: http://%s/webhook\n", req.ListenAddr)
+	if req.SecretToken != "" {
+		fmt.Fprintln(out, "  - Authentication: Enabled (X-Webhook-Token required)")
+	} else if !strings.HasPrefix(req.ListenAddr, "127.0.0.1") && !strings.HasPrefix(req.ListenAddr, "localhost") {
+		fmt.Fprintln(out, "  ⚠️ WARNING: Webhook server is bound to an open address without secret-token authentication.")
+	}
 
 	errChan := make(chan error, 1)
 	go func() {

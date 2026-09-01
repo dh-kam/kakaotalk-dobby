@@ -75,9 +75,11 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			return
 		}
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
+		// Limit request body to 64KB for safe OpenBuilder payloads
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			http.Error(w, "Payload too large or read failed", http.StatusBadRequest)
 			return
 		}
 		defer r.Body.Close()
@@ -111,10 +113,12 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	mux.HandleFunc("/api/skill", handler)
 
 	server := &http.Server{
-		Addr:         req.ListenAddr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:              req.ListenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	fmt.Fprintf(out, "🚀 Kakao i OpenBuilder Skill Server is running on %s\n", req.ListenAddr)
@@ -122,7 +126,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
 	if req.Scheduler != nil {
-		fmt.Fprintf(out, "  - Cron Scheduler: Active (%d jobs loaded)\n", len(req.Scheduler.ListJobs("")))
+		fmt.Fprintf(out, "  - Cron Scheduler: Active (%d jobs loaded)\n", len(req.Scheduler.ListAllJobs()))
 	}
 	if req.Agent != nil {
 		fmt.Fprintf(out, "  - Autonomous Agent: Active (%d tools registered)\n", len(req.Agent.GetTools()))
@@ -149,9 +153,9 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 }
 
 func processUtterance(ctx context.Context, utterance, userID, channelID string, busSvc *academy.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, sessionStore agent.SessionStore, systemPrompt string) *openbuilder.SkillResponse {
-	text := strings.ToLower(utterance)
+	text := strings.ToLower(strings.TrimSpace(utterance))
 
-	// Conversation Reset Command
+	// 1. Conversation Reset Command
 	if text == "대화초기화" || text == "대화 초기화" || text == "리셋" || text == "reset" || text == "처음으로" || text == "기억지워" {
 		if sessionStore != nil {
 			sessionStore.Clear(userID)
@@ -162,8 +166,8 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 		return resp
 	}
 
+	// 2. Exact match fast paths
 	switch {
-	// OpenBuilder verification ping / empty test / greeting
 	case text == "" || text == "test" || text == "테스트" || text == "스킬테스트" || text == "스킬 서버 테스트":
 		resp := openbuilder.NewSimpleTextResponse("🤖 안녕하세요! 0xc0de1ab AI 챗봇 스킬 서버가 정상 연결되었습니다.\n\n궁금한 점을 메시지로 입력해 주세요!")
 		resp.AddQuickReply("도움말", "도움말")
@@ -189,7 +193,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 
 	case text == "알림목록" || text == "알림 목록" || text == "스케줄" || text == "스케줄목록" || text == "예약목록":
 		if schedEngine != nil {
-			jobs := schedEngine.ListJobs("")
+			jobs := schedEngine.ListJobs(userID)
 			if len(jobs) == 0 {
 				resp := openbuilder.NewSimpleTextResponse("📋 현재 등록된 예약 알림이 없습니다.\n\n예: \"10분 뒤에 라면 끓이기 알림 줘\" 또는 \"매주 평일 15:00에 정상어학원 알림 줘\"")
 				resp.AddQuickReply("도움말", "도움말")
@@ -261,114 +265,116 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 			openbuilder.NewMessageButton("명령어 보기", "도움말"),
 		)
 		return resp
-
-	default:
-		// 1. Autonomous AI Agent First (LLM Reasoning & Function Calling with Session Memory)
-		aiCtx, cancel := context.WithTimeout(ctx, 4800*time.Millisecond)
-		defer cancel()
-
-		var history []agent.Message
-		if sessionStore != nil {
-			history = sessionStore.GetHistory(userID)
-		}
-
-		if botAgent != nil {
-			agentRes, err := botAgent.RunWithHistory(aiCtx, utterance, history)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
-			} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
-				cleanText := stripMarkdown(strings.TrimSpace(agentRes.Output))
-				var jsonMap map[string]interface{}
-				var jsonArr []map[string]interface{}
-				if err := json.Unmarshal([]byte(cleanText), &jsonMap); err == nil {
-					if msg, ok := jsonMap["message"].(string); ok && msg != "" {
-						cleanText = msg
-					} else if sum, ok := jsonMap["summary"].(string); ok && sum != "" {
-						cleanText = sum
-					} else if kf, ok := jsonMap["korean_formatted"].(string); ok && kf != "" {
-						cleanText = kf
-					}
-				} else if err := json.Unmarshal([]byte(cleanText), &jsonArr); err == nil && len(jsonArr) > 0 {
-					var sb strings.Builder
-					for _, item := range jsonArr {
-						loc, _ := item["location"].(string)
-						times, _ := item["times"].(map[string]interface{})
-						if loc != "" {
-							sb.WriteString(fmt.Sprintf("📍 %s\n", loc))
-							for k, v := range times {
-								sb.WriteString(fmt.Sprintf("  • %s: %v\n", k, v))
-							}
-							sb.WriteString("\n")
-						}
-					}
-					if sb.Len() > 0 {
-						cleanText = strings.TrimSpace(sb.String())
-					}
-				}
-
-				if sessionStore != nil {
-					sessionStore.AppendTurn(userID, utterance, cleanText)
-				}
-
-				resp := openbuilder.NewSimpleTextResponse(cleanText)
-				resp.AddQuickReply("도움말", "도움말")
-				resp.AddQuickReply("알림 목록", "알림 목록")
-				resp.AddQuickReply("대화 초기화", "대화 초기화")
-				return resp
-			}
-		}
-
-		// 2. Fallback Fast Path for Holidays if Agent fails or is disabled
-		if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "쉬는 날") || strings.Contains(text, "빨간날") || strings.Contains(text, "빨간 날") || strings.Contains(text, "무슨 날") || strings.Contains(text, "무슨날") {
-			if resp := handleHolidayFastPath(text); resp != nil {
-				return resp
-			}
-		}
-
-		// 3. Fallback Fast Path for Scheduler if Agent fails
-		if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
-			if resp := handleScheduleFastPath(schedEngine, text); resp != nil {
-				return resp
-			}
-		}
-
-		// 4. Fallback Fast Path for Bus Schedule if Agent fails
-		if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
-			if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
-				return resp
-			}
-		}
-
-		if aiProvider != nil {
-			var chatMsgs []ai.ChatMessage
-			for _, h := range history {
-				chatMsgs = append(chatMsgs, ai.ChatMessage{Role: h.Role, Content: h.Content})
-			}
-			chatMsgs = append(chatMsgs, ai.ChatMessage{Role: "user", Content: utterance})
-
-			aiResp, err := aiProvider.GenerateResponse(aiCtx, ai.CompletionRequest{
-				SystemPrompt: agent.BuildDynamicSystemPrompt(systemPrompt),
-				Messages:     chatMsgs,
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
-			} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
-				cleanText := stripMarkdown(strings.TrimSpace(aiResp.Text))
-				if sessionStore != nil {
-					sessionStore.AppendTurn(userID, utterance, cleanText)
-				}
-				resp := openbuilder.NewSimpleTextResponse(cleanText)
-				resp.AddQuickReply("도움말", "도움말")
-				resp.AddQuickReply("서버 상태", "상태")
-				resp.AddQuickReply("대화 초기화", "대화 초기화")
-				return resp
-			}
-		}
-
-		resp := openbuilder.NewSimpleTextResponse("답변을 생성하지 못했습니다. 다시 시도해 주세요.")
-		resp.AddQuickReply("도움말", "도움말")
-		return resp
 	}
+
+	// 3. Fast Path for direct single-intent questions (sub-millisecond response)
+	if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
+		if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
+			return resp
+		}
+	}
+
+	if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "쉬는 날") || strings.Contains(text, "빨간날") || strings.Contains(text, "빨간 날") || strings.Contains(text, "무슨 날") || strings.Contains(text, "무슨날") {
+		if resp := handleHolidayFastPath(text); resp != nil {
+			return resp
+		}
+	}
+
+	if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
+		if resp := handleScheduleFastPath(schedEngine, text, userID); resp != nil {
+			return resp
+		}
+	}
+
+	// 4. Autonomous AI Agent (3.5s SLA Budget with Context Cancellation defense)
+	var history []agent.Message
+	if sessionStore != nil {
+		history = sessionStore.GetHistory(userID)
+	}
+
+	if botAgent != nil {
+		agentCtx, agentCancel := context.WithTimeout(agent.WithUserID(ctx, userID), 3500*time.Millisecond)
+		agentRes, err := botAgent.RunWithHistory(agentCtx, utterance, history)
+		agentCancel()
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
+		} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
+			cleanText := stripMarkdown(strings.TrimSpace(agentRes.Output))
+			var jsonMap map[string]interface{}
+			var jsonArr []map[string]interface{}
+			if err := json.Unmarshal([]byte(cleanText), &jsonMap); err == nil {
+				if msg, ok := jsonMap["message"].(string); ok && msg != "" {
+					cleanText = msg
+				} else if sum, ok := jsonMap["summary"].(string); ok && sum != "" {
+					cleanText = sum
+				} else if kf, ok := jsonMap["korean_formatted"].(string); ok && kf != "" {
+					cleanText = kf
+				}
+			} else if err := json.Unmarshal([]byte(cleanText), &jsonArr); err == nil && len(jsonArr) > 0 {
+				var sb strings.Builder
+				for _, item := range jsonArr {
+					loc, _ := item["location"].(string)
+					times, _ := item["times"].(map[string]interface{})
+					if loc != "" {
+						sb.WriteString(fmt.Sprintf("📍 %s\n", loc))
+						for k, v := range times {
+							sb.WriteString(fmt.Sprintf("  • %s: %v\n", k, v))
+						}
+						sb.WriteString("\n")
+					}
+				}
+				if sb.Len() > 0 {
+					cleanText = strings.TrimSpace(sb.String())
+				}
+			}
+
+			if sessionStore != nil {
+				sessionStore.AppendTurn(userID, utterance, cleanText)
+			}
+
+			resp := openbuilder.NewSimpleTextResponse(cleanText)
+			resp.AddQuickReply("도움말", "도움말")
+			resp.AddQuickReply("알림 목록", "알림 목록")
+			resp.AddQuickReply("대화 초기화", "대화 초기화")
+			return resp
+		}
+	}
+
+	// 5. Fallback Text AI Provider with Fresh Remaining Budget
+	if aiProvider != nil {
+		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 1000*time.Millisecond)
+		defer fallbackCancel()
+
+		var chatMsgs []ai.ChatMessage
+		for _, h := range history {
+			chatMsgs = append(chatMsgs, ai.ChatMessage{Role: h.Role, Content: h.Content})
+		}
+		chatMsgs = append(chatMsgs, ai.ChatMessage{Role: "user", Content: utterance})
+
+		aiResp, err := aiProvider.GenerateResponse(fallbackCtx, ai.CompletionRequest{
+			SystemPrompt: agent.BuildDynamicSystemPrompt(systemPrompt),
+			Messages:     chatMsgs,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
+		} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
+			cleanText := stripMarkdown(strings.TrimSpace(aiResp.Text))
+			if sessionStore != nil {
+				sessionStore.AppendTurn(userID, utterance, cleanText)
+			}
+			resp := openbuilder.NewSimpleTextResponse(cleanText)
+			resp.AddQuickReply("도움말", "도움말")
+			resp.AddQuickReply("서버 상태", "상태")
+			resp.AddQuickReply("대화 초기화", "대화 초기화")
+			return resp
+		}
+	}
+
+	resp := openbuilder.NewSimpleTextResponse("답변을 준비하는 데 시간이 조금 지연되었습니다. 잠시 후 다시 질문해 주시거나 간단한 키워드로 문의해 주세요.")
+	resp.AddQuickReply("도움말", "도움말")
+	resp.AddQuickReply("서버 상태", "상태")
+	return resp
 }
 
 func isBusQuery(text string) bool {
@@ -497,7 +503,7 @@ func stripMarkdown(s string) string {
 	return s
 }
 
-func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance string) *openbuilder.SkillResponse {
+func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance, userID string) *openbuilder.SkillResponse {
 	text := strings.TrimSpace(utterance)
 	loc := schedEngine.Location()
 	if loc == nil {
@@ -510,7 +516,7 @@ func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance string) *op
 		fields := strings.Fields(text)
 		for _, f := range fields {
 			if strings.HasPrefix(f, "job_") {
-				if err := schedEngine.CancelJob(f); err == nil {
+				if err := schedEngine.CancelJob(f, userID); err == nil {
 					resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("✅ 알림 ID %s 가 성공적으로 취소되었습니다.", f))
 					resp.AddQuickReply("알림 목록", "알림 목록")
 					resp.AddQuickReply("도움말", "도움말")
@@ -554,7 +560,7 @@ func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance string) *op
 
 		msg := fmt.Sprintf("%s 시간입니다. (오후 %d:%02d) ⏰", title, hour, min)
 
-		job, err := schedEngine.ScheduleRecurring("kakao_user", title, msg, cronExpr, nil)
+		job, err := schedEngine.ScheduleRecurring(userID, title, msg, cronExpr, nil)
 		if err == nil {
 			resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
 				"✅ 반복 알림이 등록되었습니다.\n\n• 제목: %s\n• 주기(Cron): %s (매주 평일 %02d:%02d)\n• 내용: %s",
@@ -601,7 +607,7 @@ func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance string) *op
 			}
 
 			msg := fmt.Sprintf("약속된 시간이 되었습니다! (%s) ⏰", title)
-			job, err := schedEngine.ScheduleOnce("kakao_user", title, msg, execTime, nil)
+			job, err := schedEngine.ScheduleOnce(userID, title, msg, execTime, nil)
 			if err == nil {
 				resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
 					"✅ 알림이 성공적으로 예약되었습니다.\n\n• 제목: %s\n• 예정 시각: %s (KST)\n• 내용: %s",
@@ -648,13 +654,12 @@ func handleHolidayFastPath(text string) *openbuilder.SkillResponse {
 	} else if info.IsWeekend {
 		msg = fmt.Sprintf("🏖️ %s (%s)은 주말입니다. (휴일)", info.Date, info.Weekday)
 	} else {
-		msg = fmt.Sprintf("💼 %s (%s)은 정상 평일(영업일)입니다.", info.Date, info.Weekday)
+		msg = fmt.Sprintf("💼 %s (%s)은 정상 영업일(평일)입니다.", info.Date, info.Weekday)
 	}
 
 	resp := openbuilder.NewSimpleTextResponse(msg)
-	resp.AddQuickReply("다음 공휴일", "다음 공휴일 언제야?")
+	resp.AddQuickReply("다음 공휴일은 언제야?", "다음 공휴일")
 	resp.AddQuickReply("현재 시간", "시간")
 	resp.AddQuickReply("도움말", "도움말")
 	return resp
 }
-
