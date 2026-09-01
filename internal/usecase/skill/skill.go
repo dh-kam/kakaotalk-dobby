@@ -98,6 +98,8 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			userID = "anonymous"
 		}
 
+		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", userID, utterance)
+
 		respPayload := processUtterance(r.Context(), utterance, userID, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
