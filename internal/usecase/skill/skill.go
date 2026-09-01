@@ -59,7 +59,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 
 	sessionStore := req.SessionStore
 	if sessionStore == nil {
-		sessionStore = agent.NewMemorySessionStore(15*time.Minute, 10)
+		sessionStore = agent.NewMemorySessionStore(15*time.Minute, 50)
 	}
 
 	mux := http.NewServeMux()

@@ -170,7 +170,7 @@ Domain Knowledge:
 				Agent:        botAgent,
 				BusService:   busSvc,
 				Scheduler:    schedEngine,
-				SessionStore: agent.NewMemorySessionStore(15*time.Minute, 10),
+				SessionStore: agent.NewMemorySessionStore(15*time.Minute, 50),
 				SystemPrompt: opts.AISystemPrompt,
 				Out:          cmd.OutOrStdout(),
 			})
