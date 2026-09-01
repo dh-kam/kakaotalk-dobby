@@ -12,9 +12,9 @@ type CompactorFunc func(messages []Message) string
 
 // SessionStoreConfig defines parameters for conversation memory management.
 type SessionStoreConfig struct {
-	TTL         time.Duration
-	MaxMessages int
-	CompactTo   int
+	TTL         time.Duration // If <= 0, sessions never expire based on time (persistent in-memory)
+	MaxMessages int           // Threshold turns before compaction (default 50)
+	CompactTo   int           // Number of turns after compaction (default 5)
 	Compactor   CompactorFunc
 }
 
@@ -40,13 +40,13 @@ type sessionData struct {
 	messages   []Message
 }
 
-// NewMemorySessionStore creates an in-memory session manager with default TTL (15m), max 50 turns, and compact to 5 turns.
-func NewMemorySessionStore(ttl time.Duration, maxMessages int) SessionStore {
+// NewMemorySessionStore creates an in-memory session manager with persistent memory (no TTL expiration), max 50 turns, and compact to 5 turns.
+func NewMemorySessionStore(maxMessages int) SessionStore {
 	if maxMessages <= 0 {
 		maxMessages = 50
 	}
 	return NewMemorySessionStoreWithConfig(SessionStoreConfig{
-		TTL:         ttl,
+		TTL:         0, // No time-based expiration
 		MaxMessages: maxMessages,
 		CompactTo:   5,
 	})
@@ -54,9 +54,6 @@ func NewMemorySessionStore(ttl time.Duration, maxMessages int) SessionStore {
 
 // NewMemorySessionStoreWithConfig creates a session store with full configuration.
 func NewMemorySessionStoreWithConfig(cfg SessionStoreConfig) SessionStore {
-	if cfg.TTL <= 0 {
-		cfg.TTL = 15 * time.Minute
-	}
 	if cfg.MaxMessages <= 0 {
 		cfg.MaxMessages = 50
 	}
@@ -93,7 +90,7 @@ func (s *memorySessionStore) GetHistory(sessionID string) []Message {
 		return nil
 	}
 
-	if time.Since(sess.lastActive) > s.ttl {
+	if s.ttl > 0 && time.Since(sess.lastActive) > s.ttl {
 		delete(s.sessions, sessionID)
 		return nil
 	}
@@ -213,6 +210,9 @@ func (s *memorySessionStore) Clear(sessionID string) {
 }
 
 func (s *memorySessionStore) cleanupExpiredLocked() {
+	if s.ttl <= 0 {
+		return
+	}
 	now := time.Now()
 	for id, sess := range s.sessions {
 		if now.Sub(sess.lastActive) > s.ttl {

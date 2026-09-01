@@ -3,7 +3,6 @@ package agent
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -11,7 +10,7 @@ import (
 func TestSessionStore_Compaction(t *testing.T) {
 	// Configure store with maxMessages = 10, compactTo = 5
 	store := NewMemorySessionStoreWithConfig(SessionStoreConfig{
-		TTL:         10 * time.Minute,
+		TTL:         0,
 		MaxMessages: 10,
 		CompactTo:   5,
 	})
@@ -45,8 +44,8 @@ func TestSessionStore_Compaction(t *testing.T) {
 }
 
 func TestSessionStore_Default50TurnsCompaction(t *testing.T) {
-	// Default store: maxMessages = 50, compactTo = 5
-	store := NewMemorySessionStore(10*time.Minute, 50)
+	// Default store: maxMessages = 50, compactTo = 5, no TTL expiration
+	store := NewMemorySessionStore(50)
 
 	// Append 25 turns (50 messages)
 	for i := 1; i <= 25; i++ {
@@ -68,9 +67,20 @@ func TestSessionStore_Default50TurnsCompaction(t *testing.T) {
 	assert.Equal(t, "응답 26", hCompacted[4].Content)
 }
 
+func TestSessionStore_NoInactivityExpiration(t *testing.T) {
+	// Default persistent store
+	store := NewMemorySessionStore(50)
+	store.AppendTurn("persistent_user", "안녕", "반가워요")
+
+	// Even if time passes, it should not be cleared
+	h := store.GetHistory("persistent_user")
+	assert.Len(t, h, 2)
+	assert.Equal(t, "안녕", h[0].Content)
+}
+
 func TestSessionStore_CustomCompactor(t *testing.T) {
 	store := NewMemorySessionStoreWithConfig(SessionStoreConfig{
-		TTL:         10 * time.Minute,
+		TTL:         0,
 		MaxMessages: 4,
 		CompactTo:   3,
 		Compactor: func(msgs []Message) string {
