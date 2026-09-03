@@ -29,6 +29,7 @@ type AppConfig struct {
 	BedrockBearerToken string
 	BedrockRegion      string
 	DataDir            string
+	AdminToken         string
 }
 
 // Load loads configuration from .env file and environment variables with sensible defaults.
@@ -99,6 +100,7 @@ func Load() *AppConfig {
 		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
 		BedrockRegion:      bedrockRegion,
 		DataDir:            getDataDir(),
+		AdminToken:         getAdminToken(),
 	}
 
 	if cfg.RedirectURI == "" {
@@ -176,4 +178,12 @@ func getDataDir() string {
 	}
 	return "data/schedules"
 }
+
+func getAdminToken() string {
+	if t := os.Getenv("KAKAO_ADMIN_TOKEN"); t != "" {
+		return t
+	}
+	return os.Getenv("ADMIN_TOKEN")
+}
+
 

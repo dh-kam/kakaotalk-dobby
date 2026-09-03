@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 type defaultAgent struct {
 	provider      LLMProvider
 	tools         *ToolRegistry
 	systemPrompt  string
+	promptFunc    func() string
 	maxIterations int
+	mu            sync.RWMutex
 }
 
 // AgentConfig configures the ReAct Agent.
@@ -19,6 +22,7 @@ type AgentConfig struct {
 	Provider      LLMProvider
 	Tools         *ToolRegistry
 	SystemPrompt  string
+	PromptFunc    func() string
 	MaxIterations int
 }
 
@@ -34,6 +38,7 @@ func NewAgent(cfg AgentConfig) Agent {
 		provider:      cfg.Provider,
 		tools:         cfg.Tools,
 		systemPrompt:  cfg.SystemPrompt,
+		promptFunc:    cfg.PromptFunc,
 		maxIterations: cfg.MaxIterations,
 	}
 }
@@ -63,7 +68,14 @@ func (a *defaultAgent) RunWithHistory(ctx context.Context, input string, history
 	var steps []AgentStep
 	var totalUsage TokenUsage
 
-	dynamicPrompt := BuildDynamicSystemPrompt(a.systemPrompt)
+	a.mu.RLock()
+	sysPrompt := a.systemPrompt
+	if a.promptFunc != nil {
+		sysPrompt = a.promptFunc()
+	}
+	a.mu.RUnlock()
+
+	dynamicPrompt := BuildDynamicSystemPrompt(sysPrompt)
 
 	for iteration := 1; iteration <= a.maxIterations; iteration++ {
 		req := ToolCompletionRequest{

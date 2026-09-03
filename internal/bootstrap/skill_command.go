@@ -39,6 +39,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 		ListenAddr     string `flag:"listen" usage:"Address to listen on for Kakao OpenBuilder skill requests"`
 		ChannelID      string `flag:"channel-id" usage:"KakaoTalk channel search ID"`
 		DataDir        string `flag:"data-dir" usage:"Directory containing schedule and timetable JSON data files"`
+		AdminToken     string `flag:"admin-token" usage:"Administrative API bearer token for uploading and reloading data"`
 		AIProvider     string `flag:"ai-provider" usage:"AI LLM provider (openai, gemini, claude, ollama, groq, deepseek, mock)"`
 		AIAPIKey       string `flag:"ai-api-key" usage:"AI Provider API key"`
 		AIBaseURL      string `flag:"ai-base-url" usage:"Custom AI base URL (e.g. for Ollama http://localhost:11434/v1)"`
@@ -50,6 +51,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 		StringP("listen", "l", ":8080", "Address to listen on").
 		String("channel-id", "0xc0de1ab", "KakaoTalk channel search ID").
 		String("data-dir", cfg.DataDir, "Directory containing schedule and timetable JSON data files").
+		String("admin-token", cfg.AdminToken, "Administrative API bearer token for uploading and reloading data").
 		String("ai-provider", cfg.AIProvider, "AI LLM provider (openai, gemini, claude, ollama, groq, deepseek, mock)").
 		String("ai-api-key", cfg.AIAPIKey, "AI Provider API key").
 		String("ai-base-url", cfg.AIBaseURL, "Custom AI base URL").
@@ -153,17 +155,17 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					registry.Register(agent.NewCancelScheduleTool(schedEngine))
 					registry.Register(agent.NewDeleteScheduleTool(schedEngine))
 
-					domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
-					agentPrompt := fmt.Sprintf(`You are a helpful, polite KakaoTalk AI assistant for channel @%s.
+					botAgent = agent.NewAgent(agent.AgentConfig{
+						Provider: vProvider,
+						Tools:    registry,
+						PromptFunc: func() string {
+							domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
+							return fmt.Sprintf(`You are a helpful, polite KakaoTalk AI assistant for channel @%s.
 You have access to tools for checking current time/date/weekday (get_current_time in KST), checking Korean public holidays/business days (check_korean_holiday), looking up academy bus schedules (get_bus_schedule), looking up elementary school class timetables (get_school_timetable), managing notifications/reminders, and checking server status.
 Always answer politely, naturally, and concisely in Korean formatted for mobile screens.
 
 %s`, opts.ChannelID, domainKnowledge)
-
-					botAgent = agent.NewAgent(agent.AgentConfig{
-						Provider:      vProvider,
-						Tools:         registry,
-						SystemPrompt:  agentPrompt,
+						},
 						MaxIterations: 3,
 					})
 				}
@@ -180,6 +182,7 @@ Always answer politely, naturally, and concisely in Korean formatted for mobile 
 				SessionStore:  agent.NewMemorySessionStore(50),
 				SystemPrompt:  opts.AISystemPrompt,
 				DataDir:       opts.DataDir,
+				AdminToken:    opts.AdminToken,
 				Out:           cmd.OutOrStdout(),
 			})
 		},

@@ -37,6 +37,7 @@ type SkillServeRequest struct {
 	SessionStore  agent.SessionStore
 	SystemPrompt  string
 	DataDir       string
+	AdminToken    string
 	Out           io.Writer
 }
 
@@ -137,6 +138,10 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 
 	mux.HandleFunc("/skill", handler)
 	mux.HandleFunc("/api/skill", handler)
+	mux.HandleFunc("/api/data/upload", newAdminUploadHandler(req.DataDir, req.AdminToken, req.BusService, req.SchoolService))
+	mux.HandleFunc("/api/data/reload", newAdminReloadHandler(req.DataDir, req.AdminToken, req.BusService, req.SchoolService))
+	mux.HandleFunc("/api/data/catalogs", newAdminCatalogsHandler(req.DataDir, req.AdminToken, req.BusService, req.SchoolService))
+	mux.HandleFunc("/api/data/files", newAdminDeleteHandler(req.DataDir, req.AdminToken, req.BusService, req.SchoolService))
 
 	server := &http.Server{
 		Addr:              req.ListenAddr,
@@ -168,6 +173,15 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	} else {
 		fmt.Fprintf(out, "  - AI Provider:  %s\n", req.AIProvider.Name())
 	}
+	if req.AdminToken != "" {
+		fmt.Fprintf(out, "  - Admin API:   Active (token auth required)\n")
+	} else {
+		fmt.Fprintf(out, "  - Admin API:   Active (open/dev mode)\n")
+	}
+	fmt.Fprintf(out, "    • Upload:    POST http://%s/api/data/upload\n", req.ListenAddr)
+	fmt.Fprintf(out, "    • Reload:    POST http://%s/api/data/reload\n", req.ListenAddr)
+	fmt.Fprintf(out, "    • Catalogs:  GET  http://%s/api/data/catalogs\n", req.ListenAddr)
+	fmt.Fprintf(out, "    • Delete:    DELETE http://%s/api/data/files?filename=...\n", req.ListenAddr)
 
 	errChan := make(chan error, 1)
 	go func() {
