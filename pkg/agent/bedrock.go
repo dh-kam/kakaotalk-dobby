@@ -110,9 +110,14 @@ func (p *bedrockProvider) GenerateWithTools(ctx context.Context, req ToolComplet
 
 		if m.Role == "tool" {
 			role = "user"
+			status := "success"
+			if strings.HasPrefix(m.Content, "Error:") || strings.HasPrefix(m.Content, "Error executing") {
+				status = "error"
+			}
 			contentItems = append(contentItems, map[string]interface{}{
 				"toolResult": map[string]interface{}{
 					"toolUseId": m.ToolCallID,
+					"status":    status,
 					"content": []map[string]interface{}{
 						{"text": m.Content},
 					},

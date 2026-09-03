@@ -64,7 +64,9 @@ func (t *BusScheduleTool) Execute(ctx context.Context, argsJSON string) (string,
 	}
 
 	if argsJSON != "" && argsJSON != "{}" {
-		_ = json.Unmarshal([]byte(argsJSON), &args)
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return "", fmt.Errorf("invalid json arguments: %w", err)
+		}
 	}
 
 	matches := t.svc.Search(academy.SearchQuery{

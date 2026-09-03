@@ -138,3 +138,69 @@ func NewBlockButton(label, blockID string) CardButton {
 		BlockID: blockID,
 	}
 }
+
+// truncateRunes truncates a string to maxRunes safely without breaking UTF-8 characters.
+func truncateRunes(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
+// ValidateAndNormalize enforces Kakao i OpenBuilder platform constraints on the response.
+// It ensures text card limits, button limits, and quick reply counts are within bounds.
+func (r *SkillResponse) ValidateAndNormalize() *SkillResponse {
+	if r == nil {
+		return r
+	}
+
+	// Kakao allows at most 3 outputs
+	if len(r.Template.Outputs) > 3 {
+		r.Template.Outputs = r.Template.Outputs[:3]
+	}
+
+	for i := range r.Template.Outputs {
+		out := &r.Template.Outputs[i]
+		if out.SimpleText != nil {
+			out.SimpleText.Text = truncateRunes(out.SimpleText.Text, 1000)
+		}
+		if out.TextCard != nil {
+			out.TextCard.Title = truncateRunes(out.TextCard.Title, 50)
+			maxDesc := 400 - len([]rune(out.TextCard.Title))
+			if maxDesc < 0 {
+				maxDesc = 0
+			}
+			out.TextCard.Description = truncateRunes(out.TextCard.Description, maxDesc)
+			if len(out.TextCard.Buttons) > 3 {
+				out.TextCard.Buttons = out.TextCard.Buttons[:3]
+			}
+			for bIdx := range out.TextCard.Buttons {
+				out.TextCard.Buttons[bIdx].Label = truncateRunes(out.TextCard.Buttons[bIdx].Label, 14)
+			}
+		}
+		if out.BasicCard != nil {
+			out.BasicCard.Title = truncateRunes(out.BasicCard.Title, 50)
+			out.BasicCard.Description = truncateRunes(out.BasicCard.Description, 400)
+			if len(out.BasicCard.Buttons) > 3 {
+				out.BasicCard.Buttons = out.BasicCard.Buttons[:3]
+			}
+			for bIdx := range out.BasicCard.Buttons {
+				out.BasicCard.Buttons[bIdx].Label = truncateRunes(out.BasicCard.Buttons[bIdx].Label, 14)
+			}
+		}
+	}
+
+	// Kakao allows at most 10 quick replies, each label <= 14 runes
+	if len(r.Template.QuickReplies) > 10 {
+		r.Template.QuickReplies = r.Template.QuickReplies[:10]
+	}
+	for i := range r.Template.QuickReplies {
+		r.Template.QuickReplies[i].Label = truncateRunes(r.Template.QuickReplies[i].Label, 14)
+	}
+
+	return r
+}

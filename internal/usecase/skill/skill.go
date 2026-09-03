@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
@@ -33,6 +35,16 @@ type SkillServeRequest struct {
 	SessionStore agent.SessionStore
 	SystemPrompt string
 	Out          io.Writer
+}
+
+var userLocks sync.Map
+
+// lockUser returns an unlocker function that serializes requests for the given userID.
+func lockUser(userID string) func() {
+	val, _ := userLocks.LoadOrStore(userID, &sync.Mutex{})
+	mu := val.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // SkillServeUseCase runs the HTTP skill webhook server with AI integration.
@@ -100,9 +112,20 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			userID = "anonymous"
 		}
 
+		// Serialize concurrent turns per user to preserve chronological dialogue order
+		unlock := lockUser(userID)
+		defer unlock()
+
 		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", userID, utterance)
 
-		respPayload := processUtterance(r.Context(), utterance, userID, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
+		// Enforce a strict 4.2s global deadline to guarantee Kakao 5.0s SLA compliance
+		reqCtx, reqCancel := context.WithTimeout(r.Context(), 4200*time.Millisecond)
+		defer reqCancel()
+
+		respPayload := processUtterance(reqCtx, utterance, userID, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
+		if respPayload != nil {
+			respPayload.ValidateAndNormalize()
+		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -198,6 +221,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 				resp := openbuilder.NewSimpleTextResponse("📋 현재 등록된 예약 알림이 없습니다.\n\n예: \"10분 뒤에 라면 끓이기 알림 줘\" 또는 \"매주 평일 15:00에 정상어학원 알림 줘\"")
 				resp.AddQuickReply("도움말", "도움말")
 				resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+				appendFastPathTurn(sessionStore, userID, utterance, resp)
 				return resp
 			}
 
@@ -222,9 +246,11 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 			resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
 			resp.AddQuickReply("도움말", "도움말")
 			resp.AddQuickReply("상태 확인", "상태")
+			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
 		resp := openbuilder.NewSimpleTextResponse("스케줄러가 활성화되지 않았습니다.")
+		appendFastPathTurn(sessionStore, userID, utterance, resp)
 		return resp
 
 	case text == "상태" || text == "status" || text == "서버상태":
@@ -240,6 +266,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 			openbuilder.NewMessageButton("다시 조회", "상태"),
 			openbuilder.NewMessageButton("도움말", "도움말"),
 		)
+		appendFastPathTurn(sessionStore, userID, utterance, resp)
 		return resp
 
 	case text == "시간" || text == "현재시간" || text == "time" || text == "지금몇시" || text == "몇시야" || text == "날짜" || text == "오늘날짜" || text == "요일" || text == "무슨요일":
@@ -250,6 +277,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 		resp.AddQuickReply("오늘 휴일이야?", "오늘 휴일이야?")
 		resp.AddQuickReply("상태 확인", "상태")
 		resp.AddQuickReply("도움말", "도움말")
+		appendFastPathTurn(sessionStore, userID, utterance, resp)
 		return resp
 
 	case text == "핑" || text == "ping":
@@ -270,65 +298,57 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 	// 3. Fast Path for direct single-intent questions (sub-millisecond response)
 	if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
 		if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
+			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
 	}
 
 	if strings.Contains(text, "휴일") || strings.Contains(text, "공휴일") || strings.Contains(text, "쉬는날") || strings.Contains(text, "쉬는 날") || strings.Contains(text, "빨간날") || strings.Contains(text, "빨간 날") || strings.Contains(text, "무슨 날") || strings.Contains(text, "무슨날") {
 		if resp := handleHolidayFastPath(text); resp != nil {
+			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
 	}
 
 	if schedEngine != nil && (strings.Contains(text, "알림") || strings.Contains(text, "예약") || strings.Contains(text, "취소")) {
 		if resp := handleScheduleFastPath(schedEngine, text, userID); resp != nil {
+			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
 	}
 
-	// 4. Autonomous AI Agent (3.5s SLA Budget with Context Cancellation defense)
+	// 4. Autonomous AI Agent (Dynamic SLA Budget with Context Cancellation defense)
 	var history []agent.Message
 	if sessionStore != nil {
 		history = sessionStore.GetHistory(userID)
 	}
 
-	if botAgent != nil {
-		agentCtx, agentCancel := context.WithTimeout(agent.WithUserID(ctx, userID), 3500*time.Millisecond)
+	deadline, hasDeadline := ctx.Deadline()
+	var agentTimeout time.Duration = 2800 * time.Millisecond
+	if hasDeadline {
+		remaining := time.Until(deadline)
+		// Reserve at least 800ms for fallback + serialization + transmission
+		if remaining > 1100*time.Millisecond {
+			agentTimeout = remaining - 800*time.Millisecond
+			if agentTimeout > 3000*time.Millisecond {
+				agentTimeout = 3000 * time.Millisecond
+			}
+		} else if remaining > 400*time.Millisecond {
+			agentTimeout = remaining - 200*time.Millisecond
+		} else {
+			agentTimeout = 100 * time.Millisecond
+		}
+	}
+
+	if botAgent != nil && agentTimeout >= 400*time.Millisecond {
+		agentCtx, agentCancel := context.WithTimeout(agent.WithUserID(ctx, userID), agentTimeout)
 		agentRes, err := botAgent.RunWithHistory(agentCtx, utterance, history)
 		agentCancel()
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
 		} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
-			cleanText := stripMarkdown(strings.TrimSpace(agentRes.Output))
-			var jsonMap map[string]interface{}
-			var jsonArr []map[string]interface{}
-			if err := json.Unmarshal([]byte(cleanText), &jsonMap); err == nil {
-				if msg, ok := jsonMap["message"].(string); ok && msg != "" {
-					cleanText = msg
-				} else if sum, ok := jsonMap["summary"].(string); ok && sum != "" {
-					cleanText = sum
-				} else if kf, ok := jsonMap["korean_formatted"].(string); ok && kf != "" {
-					cleanText = kf
-				}
-			} else if err := json.Unmarshal([]byte(cleanText), &jsonArr); err == nil && len(jsonArr) > 0 {
-				var sb strings.Builder
-				for _, item := range jsonArr {
-					loc, _ := item["location"].(string)
-					times, _ := item["times"].(map[string]interface{})
-					if loc != "" {
-						sb.WriteString(fmt.Sprintf("📍 %s\n", loc))
-						for k, v := range times {
-							sb.WriteString(fmt.Sprintf("  • %s: %v\n", k, v))
-						}
-						sb.WriteString("\n")
-					}
-				}
-				if sb.Len() > 0 {
-					cleanText = strings.TrimSpace(sb.String())
-				}
-			}
-
+			cleanText := cleanAndFormatOutput(agentRes.Output)
 			if sessionStore != nil {
 				sessionStore.AppendTurn(userID, utterance, cleanText)
 			}
@@ -341,9 +361,22 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 		}
 	}
 
-	// 5. Fallback Text AI Provider with Fresh Remaining Budget
+	// 5. Fallback Text AI Provider with Dynamic Remaining Budget
 	if aiProvider != nil {
-		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 1000*time.Millisecond)
+		var fallbackTimeout time.Duration = 800 * time.Millisecond
+		if hasDeadline {
+			remaining := time.Until(deadline)
+			if remaining > 300*time.Millisecond {
+				fallbackTimeout = remaining - 150*time.Millisecond
+			} else {
+				// Less than 300ms remaining, do not risk Kakao 5.0s SLA timeout
+				return openbuilder.NewSimpleTextResponse("죄송합니다. 현재 질의 분석에 시간이 지연되고 있습니다. 잠시 후 다시 질문해 주시겠어요?").
+					AddQuickReply("도움말", "도움말").
+					AddQuickReply("상태", "상태")
+			}
+		}
+
+		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, fallbackTimeout)
 		defer fallbackCancel()
 
 		var chatMsgs []ai.ChatMessage
@@ -359,7 +392,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
 		} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
-			cleanText := stripMarkdown(strings.TrimSpace(aiResp.Text))
+			cleanText := cleanAndFormatOutput(aiResp.Text)
 			if sessionStore != nil {
 				sessionStore.AppendTurn(userID, utterance, cleanText)
 			}
@@ -479,20 +512,93 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 	phoneClean = strings.ReplaceAll(phoneClean, " ", "")
 
 	cardTitle := fmt.Sprintf("🚌 %s %s", first.AcademyName, first.VehicleNumber)
+	desc := strings.TrimSpace(sb.String())
 
-	resp := openbuilder.NewTextCardResponse(
-		cardTitle,
-		strings.TrimSpace(sb.String()),
-		openbuilder.NewPhoneButton("기사님 전화 연결", phoneClean),
-		openbuilder.NewMessageButton("다른 정류장 조회", "정상어학원 버스 시간표 알려줘"),
-	)
+	var resp *openbuilder.SkillResponse
+	// OpenBuilder TextCard enforces max 400 runes (title + description <= 400).
+	// If the timetable list is long (e.g. all 12 stops), use SimpleText which supports up to 1000 runes!
+	if len([]rune(desc))+len([]rune(cardTitle)) <= 400 {
+		resp = openbuilder.NewTextCardResponse(
+			cardTitle,
+			desc,
+			openbuilder.NewPhoneButton("기사님 전화 연결", phoneClean),
+			openbuilder.NewMessageButton("다른 정류장 조회", "정상어학원 버스 시간표 알려줘"),
+		)
+	} else {
+		resp = openbuilder.NewSimpleTextResponse(fmt.Sprintf("%s\n\n%s", cardTitle, desc))
+	}
 	resp.AddQuickReply("우미린 2차 시간", "우미린 2차 버스 몇 시에 와?")
 	resp.AddQuickReply("양포도서관 시간", "양포도서관 버스 몇 시에 와?")
 	resp.AddQuickReply("도움말", "도움말")
 	return resp
 }
 
+var (
+	jsonBlockRegex = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\}|\\[.*?\\])\\s*```")
+	codeBlockRegex = regexp.MustCompile("(?s)```[a-zA-Z0-9_-]*\\s*(.*?)\\s*```")
+)
+
+func cleanAndFormatOutput(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+
+	// 1. Check if enclosed in ```json ... ``` block
+	if match := jsonBlockRegex.FindStringSubmatch(trimmed); len(match) > 1 {
+		candidate := strings.TrimSpace(match[1])
+		if parsed := tryFormatJSON(candidate); parsed != "" {
+			return parsed
+		}
+	}
+
+	// 2. Check if raw string is already JSON
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		if parsed := tryFormatJSON(trimmed); parsed != "" {
+			return parsed
+		}
+	}
+
+	// 3. Clean markdown formatting safely
+	return stripMarkdown(trimmed)
+}
+
+func tryFormatJSON(candidate string) string {
+	var jsonMap map[string]interface{}
+	var jsonArr []map[string]interface{}
+
+	if err := json.Unmarshal([]byte(candidate), &jsonMap); err == nil {
+		if msg, ok := jsonMap["message"].(string); ok && msg != "" {
+			return msg
+		} else if sum, ok := jsonMap["summary"].(string); ok && sum != "" {
+			return sum
+		} else if kf, ok := jsonMap["korean_formatted"].(string); ok && kf != "" {
+			return kf
+		} else if text, ok := jsonMap["text"].(string); ok && text != "" {
+			return text
+		}
+	}
+
+	if err := json.Unmarshal([]byte(candidate), &jsonArr); err == nil && len(jsonArr) > 0 {
+		var sb strings.Builder
+		for _, item := range jsonArr {
+			loc, _ := item["location"].(string)
+			times, _ := item["times"].(map[string]interface{})
+			if loc != "" {
+				sb.WriteString(fmt.Sprintf("📍 %s\n", loc))
+				for k, v := range times {
+					sb.WriteString(fmt.Sprintf("  • %s: %v\n", k, v))
+				}
+				sb.WriteString("\n")
+			}
+		}
+		if sb.Len() > 0 {
+			return strings.TrimSpace(sb.String())
+		}
+	}
+
+	return ""
+}
+
 func stripMarkdown(s string) string {
+	s = codeBlockRegex.ReplaceAllString(s, "$1")
 	s = strings.ReplaceAll(s, "**", "")
 	s = strings.ReplaceAll(s, "__", "")
 	s = strings.ReplaceAll(s, "### ", "")
@@ -500,7 +606,25 @@ func stripMarkdown(s string) string {
 	s = strings.ReplaceAll(s, "# ", "")
 	s = strings.ReplaceAll(s, "`", "")
 	s = strings.ReplaceAll(s, "> ", "💡 ")
-	return s
+	return strings.TrimSpace(s)
+}
+
+func appendFastPathTurn(sessionStore agent.SessionStore, userID, utterance string, resp *openbuilder.SkillResponse) {
+	if sessionStore == nil || resp == nil || len(resp.Template.Outputs) == 0 {
+		return
+	}
+	out := resp.Template.Outputs[0]
+	var text string
+	if out.SimpleText != nil {
+		text = out.SimpleText.Text
+	} else if out.TextCard != nil {
+		text = out.TextCard.Title + "\n" + out.TextCard.Description
+	} else if out.BasicCard != nil {
+		text = out.BasicCard.Title + "\n" + out.BasicCard.Description
+	}
+	if text != "" {
+		sessionStore.AppendTurn(userID, utterance, text)
+	}
 }
 
 func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance, userID string) *openbuilder.SkillResponse {

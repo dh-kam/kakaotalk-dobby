@@ -260,12 +260,7 @@ func (e *Engine) executeJob(jobID string) {
 	now := time.Now().In(e.loc)
 	job.LastFiredAt = &now
 
-	if job.Type == ScheduleTypeOnce {
-		job.Status = JobStatusCompleted
-	}
-
-	_ = e.store.Save(job)
-
+	var handlerErr error
 	if e.handler != nil {
 		e.mu.RLock()
 		ctx := e.ctx
@@ -275,9 +270,20 @@ func (e *Engine) executeJob(jobID string) {
 			ctx = context.Background()
 		}
 		if err := e.handler(ctx, job); err != nil {
+			handlerErr = err
 			fmt.Fprintf(os.Stderr, "⚠️ [Scheduler] Job %s handler error: %v\n", jobID, err)
 		}
 	}
+
+	if job.Type == ScheduleTypeOnce {
+		if handlerErr == nil {
+			job.Status = JobStatusCompleted
+		} else {
+			job.Status = JobStatusFailed
+		}
+	}
+
+	_ = e.store.Save(job)
 }
 
 // CancelJob cancels a scheduled job. If ownerUserID is provided, it verifies ownership.

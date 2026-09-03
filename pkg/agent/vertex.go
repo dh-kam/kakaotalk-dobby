@@ -182,10 +182,16 @@ func (p *vertexSDKProvider) GenerateWithTools(ctx context.Context, req ToolCompl
 		if m.Role == "tool" {
 			role = "user"
 			var respMap map[string]any
-			if err := json.Unmarshal([]byte(m.Content), &respMap); err != nil {
-				respMap = map[string]any{"output": m.Content}
+			if err := json.Unmarshal([]byte(m.Content), &respMap); err == nil {
+				parts = append(parts, genai.NewPartFromFunctionResponse(m.Name, respMap))
+			} else {
+				var respArr []any
+				if err := json.Unmarshal([]byte(m.Content), &respArr); err == nil {
+					parts = append(parts, genai.NewPartFromFunctionResponse(m.Name, map[string]any{"items": respArr}))
+				} else {
+					parts = append(parts, genai.NewPartFromFunctionResponse(m.Name, map[string]any{"output": m.Content}))
+				}
 			}
-			parts = append(parts, genai.NewPartFromFunctionResponse(m.Name, respMap))
 		}
 
 		if len(parts) > 0 {
