@@ -324,15 +324,15 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 	}
 
 	// 3. Fast Path for direct single-intent questions (sub-millisecond response)
-	if busSvc != nil && isBusQuery(busSvc, text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
-		if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
+	if schoolSvc != nil && isSchoolQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
+		if resp := handleSchoolTimetableFastPath(schoolSvc, text); resp != nil {
 			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
 	}
 
-	if schoolSvc != nil && isSchoolQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
-		if resp := handleSchoolTimetableFastPath(schoolSvc, text); resp != nil {
+	if busSvc != nil && isBusQuery(busSvc, text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
+		if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
 			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
@@ -565,8 +565,10 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 		}
 	}
 
+	academyQ := busSvc.MatchAcademyFromText(text)
+
 	matches := busSvc.Search(academy.SearchQuery{
-		Academy:  "정상",
+		Academy:  academyQ,
 		Location: matchedLoc,
 	})
 
@@ -578,7 +580,9 @@ func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilde
 
 	var sb strings.Builder
 	if displayLocName != "" {
-		sb.WriteString(fmt.Sprintf("[%s • %s 시간표]\n\n", displayLocName, first.ScheduleType))
+		sb.WriteString(fmt.Sprintf("[%s • %s • %s 시간표]\n\n", first.AcademyName, displayLocName, first.ScheduleType))
+	} else {
+		sb.WriteString(fmt.Sprintf("[%s • %s 시간표]\n\n", first.AcademyName, first.ScheduleType))
 	}
 
 	for _, m := range matches {

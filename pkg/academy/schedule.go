@@ -263,7 +263,13 @@ func (s *Service) HasBusQuery(text string) bool {
 	defer s.mu.RUnlock()
 
 	clean := strings.ToLower(strings.TrimSpace(text))
-	commonKeywords := []string{"버스", "시간표", "정류장", "등원", "하원", "기사", "셔틀", "차량", "탑승"}
+
+	// If query explicitly refers to school without bus/shuttle, do not route to bus schedule
+	if strings.Contains(clean, "학교") && !strings.Contains(clean, "버스") && !strings.Contains(clean, "셔틀") {
+		return false
+	}
+
+	commonKeywords := []string{"버스", "정류장", "등원", "하원", "기사", "셔틀", "차량", "탑승"}
 	for _, kw := range commonKeywords {
 		if strings.Contains(clean, kw) {
 			return true
@@ -282,3 +288,18 @@ func (s *Service) HasBusQuery(text string) bool {
 	}
 	return false
 }
+
+// MatchAcademyFromText checks if text mentions any registered academy name or alias, returning the matched academy name.
+func (s *Service) MatchAcademyFromText(text string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	clean := strings.ToLower(strings.TrimSpace(text))
+	for _, sched := range s.schedules {
+		if s.matchAcademy(sched.Academy, clean) {
+			return sched.Academy.Name
+		}
+	}
+	return ""
+}
+
