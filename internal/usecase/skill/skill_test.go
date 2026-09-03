@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,14 +34,22 @@ func waitForServer(t *testing.T, url string) {
 func TestSkillServer_ProcessUtterance(t *testing.T) {
 	addr := "127.0.0.1:18082"
 
+	busSvc := academy.NewService()
+	_ = busSvc.LoadFromDir("../../data/schedules")
+	schoolSvc := school.NewService()
+	_ = schoolSvc.LoadFromDir("../../data/schedules")
+
 	var buf bytes.Buffer
 	uc := NewSkillServeUseCase()
 	go func() {
 		_ = uc.Execute(t.Context(), SkillServeRequest{
-			ListenAddr: addr,
-			ChannelID:  "0xc0de1ab",
-			AIProvider: ai.NewMockProvider("mock-llm"),
-			Out:        &buf,
+			ListenAddr:    addr,
+			ChannelID:     "0xc0de1ab",
+			AIProvider:    ai.NewMockProvider("mock-llm"),
+			BusService:    busSvc,
+			SchoolService: schoolSvc,
+			DataDir:       "../../data/schedules",
+			Out:           &buf,
 		})
 	}()
 	waitForServer(t, "http://"+addr+"/healthz")
@@ -110,4 +120,44 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 	err = json.NewDecoder(resetPostResp.Body).Decode(&resetSkillResp)
 	require.NoError(t, err)
 	assert.Contains(t, resetSkillResp.Template.Outputs[0].SimpleText.Text, "초기화했습니다")
+
+	// Test School Timetable Fast Path
+	schoolPayload := openbuilder.SkillPayload{
+		UserRequest: openbuilder.UserRequest{
+			Utterance: "월요일 학교 시간표 알려줘",
+			User: openbuilder.ChatUser{
+				ID: "test-user",
+			},
+		},
+	}
+	schoolBody, _ := json.Marshal(schoolPayload)
+	schoolPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(schoolBody))
+	require.NoError(t, err)
+	defer schoolPostResp.Body.Close()
+
+	var schoolSkillResp openbuilder.SkillResponse
+	err = json.NewDecoder(schoolPostResp.Body).Decode(&schoolSkillResp)
+	require.NoError(t, err)
+	assert.NotEmpty(t, schoolSkillResp.Template.Outputs)
+	assert.Contains(t, schoolSkillResp.Template.Outputs[0].SimpleText.Text, "월요일")
+
+	// Test Bus Fast Path
+	busPayload := openbuilder.SkillPayload{
+		UserRequest: openbuilder.UserRequest{
+			Utterance: "우미린 2차 버스 몇 시에 와?",
+			User: openbuilder.ChatUser{
+				ID: "test-user",
+			},
+		},
+	}
+	busBody, _ := json.Marshal(busPayload)
+	busPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(busBody))
+	require.NoError(t, err)
+	defer busPostResp.Body.Close()
+
+	var busSkillResp openbuilder.SkillResponse
+	err = json.NewDecoder(busPostResp.Body).Decode(&busSkillResp)
+	require.NoError(t, err)
+	assert.NotEmpty(t, busSkillResp.Template.Outputs)
 }
+

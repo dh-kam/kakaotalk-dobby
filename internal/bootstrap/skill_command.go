@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/dh-kam/kakaotalk-dobby/internal/config"
 	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/skill"
@@ -37,6 +38,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 	opts := struct {
 		ListenAddr     string `flag:"listen" usage:"Address to listen on for Kakao OpenBuilder skill requests"`
 		ChannelID      string `flag:"channel-id" usage:"KakaoTalk channel search ID"`
+		DataDir        string `flag:"data-dir" usage:"Directory containing schedule and timetable JSON data files"`
 		AIProvider     string `flag:"ai-provider" usage:"AI LLM provider (openai, gemini, claude, ollama, groq, deepseek, mock)"`
 		AIAPIKey       string `flag:"ai-api-key" usage:"AI Provider API key"`
 		AIBaseURL      string `flag:"ai-base-url" usage:"Custom AI base URL (e.g. for Ollama http://localhost:11434/v1)"`
@@ -47,6 +49,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 	binder := flagsbinder.NewViperCobraFlagsBinder().
 		StringP("listen", "l", ":8080", "Address to listen on").
 		String("channel-id", "0xc0de1ab", "KakaoTalk channel search ID").
+		String("data-dir", cfg.DataDir, "Directory containing schedule and timetable JSON data files").
 		String("ai-provider", cfg.AIProvider, "AI LLM provider (openai, gemini, claude, ollama, groq, deepseek, mock)").
 		String("ai-api-key", cfg.AIAPIKey, "AI Provider API key").
 		String("ai-base-url", cfg.AIBaseURL, "Custom AI base URL").
@@ -84,13 +87,18 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			}
 
 			busSvc := academy.NewService()
-			_ = busSvc.LoadFromDir("data/schedules")
+			_ = busSvc.LoadFromDir(opts.DataDir)
 
-			schoolSvc, _ := school.NewServiceFromFile("data/schedules/2026_6-9_school_timetable.json")
+			schoolSvc := school.NewService()
+			_ = schoolSvc.LoadFromDir(opts.DataDir)
 
 			// Initialize Scheduler Store & Dispatcher
 			var store scheduler.Store
-			fileStore, err := scheduler.NewFileStore("data/jobs.json")
+			jobsPath := filepath.Join(opts.DataDir, "jobs.json")
+			fileStore, err := scheduler.NewFileStore(jobsPath)
+			if err != nil {
+				fileStore, err = scheduler.NewFileStore("data/jobs.json")
+			}
 			if err != nil {
 				store = scheduler.NewMemoryStore()
 			} else {
@@ -145,33 +153,34 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					registry.Register(agent.NewCancelScheduleTool(schedEngine))
 					registry.Register(agent.NewDeleteScheduleTool(schedEngine))
 
-					botAgent = agent.NewAgent(agent.AgentConfig{
-						Provider: vProvider,
-						Tools:    registry,
-						SystemPrompt: `You are a helpful, polite KakaoTalk AI assistant for channel @0xc0de1ab.
-You have access to tools for checking current time/date/weekday (get_current_time in KST), checking Korean public holidays/business days (check_korean_holiday), looking up academy bus schedules (get_bus_schedule), looking up elementary school class timetables (get_school_timetable for 2026학년도 6학년 9반), managing notifications/reminders, and checking server status.
+					domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
+					agentPrompt := fmt.Sprintf(`You are a helpful, polite KakaoTalk AI assistant for channel @%s.
+You have access to tools for checking current time/date/weekday (get_current_time in KST), checking Korean public holidays/business days (check_korean_holiday), looking up academy bus schedules (get_bus_schedule), looking up elementary school class timetables (get_school_timetable), managing notifications/reminders, and checking server status.
 Always answer politely, naturally, and concisely in Korean formatted for mobile screens.
 
-Domain Knowledge:
-- "우미린 2차" (or "우미린2차") is officially also known as "우미린더스카이" or "더스카이" (구미 산동 확장단지 우미린 센트럴파크/더스카이). When users ask about "우미린더스카이" or "더스카이", search for "우미린2차" bus stops.
-- "우미린 1차" is known as "우미린 풀하우스".
-- "정상어학원" shuttle routes serve both "산동옥계 정상어학원" and "강의하는아이들".
-- "학교 시간표": 2026학년도 6학년 9반 시간표가 등록되어 있습니다. 오늘 시간표, 요일별 과목, 교시, 하교 시간, 학급 생활 규칙을 물어보면 get_school_timetable 도구를 호출하세요.`,
+%s`, opts.ChannelID, domainKnowledge)
+
+					botAgent = agent.NewAgent(agent.AgentConfig{
+						Provider:      vProvider,
+						Tools:         registry,
+						SystemPrompt:  agentPrompt,
 						MaxIterations: 3,
 					})
 				}
 			}
 
 			return skill.NewSkillServeUseCase().Execute(cmd.Context(), skill.SkillServeRequest{
-				ListenAddr:   opts.ListenAddr,
-				ChannelID:    opts.ChannelID,
-				AIProvider:   aiProvider,
-				Agent:        botAgent,
-				BusService:   busSvc,
-				Scheduler:    schedEngine,
-				SessionStore: agent.NewMemorySessionStore(50),
-				SystemPrompt: opts.AISystemPrompt,
-				Out:          cmd.OutOrStdout(),
+				ListenAddr:    opts.ListenAddr,
+				ChannelID:     opts.ChannelID,
+				AIProvider:    aiProvider,
+				Agent:         botAgent,
+				BusService:    busSvc,
+				SchoolService: schoolSvc,
+				Scheduler:     schedEngine,
+				SessionStore:  agent.NewMemorySessionStore(50),
+				SystemPrompt:  opts.AISystemPrompt,
+				DataDir:       opts.DataDir,
+				Out:           cmd.OutOrStdout(),
 			})
 		},
 	}

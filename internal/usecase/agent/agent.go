@@ -9,6 +9,7 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/agent"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
 )
 
 // AgentRunRequest holds parameters for executing an Agent prompt.
@@ -27,6 +28,7 @@ type AgentRunRequest struct {
 	ClientSecret string
 	RedirectURI  string
 	TokenPath    string
+	DataDir      string
 	Out          io.Writer
 }
 
@@ -68,10 +70,19 @@ func (uc *AgentRunUseCase) Execute(ctx context.Context, req AgentRunRequest) err
 	registry.Register(&agent.KoreanHolidayTool{})
 	registry.Register(&agent.ServerStatusTool{})
 
+	dataDir := req.DataDir
+	if dataDir == "" {
+		dataDir = "data/schedules"
+	}
+
 	busSvc := academy.NewService()
-	_ = busSvc.LoadFromDir("data/schedules")
+	_ = busSvc.LoadFromDir(dataDir)
 	_ = busSvc.LoadFromDir("data")
 	registry.Register(agent.NewBusScheduleTool(busSvc))
+
+	schoolSvc := school.NewService()
+	_ = schoolSvc.LoadFromDir(dataDir)
+	registry.Register(agent.NewSchoolTimetableTool(schoolSvc))
 
 	if req.ClientID != "" {
 		kakaoClient := kakao.NewClient(kakao.ClientConfig{
@@ -83,16 +94,16 @@ func (uc *AgentRunUseCase) Execute(ctx context.Context, req AgentRunRequest) err
 		registry.Register(agent.NewSendKakaoMessageTool(kakaoClient))
 	}
 
-	botAgent := agent.NewAgent(agent.AgentConfig{
-		Provider: llmProvider,
-		Tools:    registry,
-		SystemPrompt: `You are an intelligent KakaoBot Agent. You have access to tools for looking up academy shuttle bus schedules (e.g. 정상어학원, 강의하는아이들), checking server metrics, and sending KakaoTalk messages.
+	domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
+	agentPrompt := fmt.Sprintf(`You are an intelligent KakaoBot Agent. You have access to tools for looking up academy shuttle bus schedules, elementary school class timetables, checking server metrics, and sending KakaoTalk messages.
 Think step-by-step and call appropriate tools when needed. Always respond in clear, polite Korean.
 
-Domain Knowledge:
-- "우미린 2차" (or "우미린2차") is officially also known as "우미린더스카이" or "더스카이" (구미 산동 확장단지 우미린 센트럴파크/더스카이). When users ask about "우미린더스카이" or "더스카이", search for "우미린2차" bus stops.
-- "우미린 1차" is known as "우미린 풀하우스".
-- "정상어학원" shuttle routes serve both "산동옥계 정상어학원" and "강의하는아이들".`,
+%s`, domainKnowledge)
+
+	botAgent := agent.NewAgent(agent.AgentConfig{
+		Provider:      llmProvider,
+		Tools:         registry,
+		SystemPrompt:  agentPrompt,
 		MaxIterations: 5,
 	})
 

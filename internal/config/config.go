@@ -28,6 +28,7 @@ type AppConfig struct {
 	VertexModel        string
 	BedrockBearerToken string
 	BedrockRegion      string
+	DataDir            string
 }
 
 // Load loads configuration from .env file and environment variables with sensible defaults.
@@ -97,6 +98,7 @@ func Load() *AppConfig {
 		VertexModel:        os.Getenv("VERTEX_MODEL"),
 		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
 		BedrockRegion:      bedrockRegion,
+		DataDir:            getDataDir(),
 	}
 
 	if cfg.RedirectURI == "" {
@@ -164,3 +166,14 @@ func (c *AppConfig) BuildAIProvider() (ai.Provider, error) {
 		Model:        c.AIModel,
 	})
 }
+
+func getDataDir() string {
+	if d := os.Getenv("KAKAO_DATA_DIR"); d != "" {
+		return d
+	}
+	if d := os.Getenv("DATA_DIR"); d != "" {
+		return d
+	}
+	return "data/schedules"
+}
+

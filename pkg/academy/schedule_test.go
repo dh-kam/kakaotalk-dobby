@@ -60,3 +60,21 @@ func TestAcademyService_Search(t *testing.T) {
 	})
 	assert.Empty(t, resNone)
 }
+
+func TestAcademyService_ReloadAndHasBusQuery(t *testing.T) {
+	svc := NewService()
+	dir := "../../data/schedules"
+	err := svc.LoadFromDir(dir)
+	require.NoError(t, err)
+
+	assert.True(t, svc.HasBusQuery("정상어학원 버스 언제 와?"))
+	assert.True(t, svc.HasBusQuery("우미린2차 버스 몇 시?"))
+	assert.True(t, svc.HasBusQuery("셔틀 시간표 알려줘"))
+	assert.False(t, svc.HasBusQuery("오늘 날씨 어때?"))
+
+	// Test reload
+	err = svc.ReloadFromDir(dir)
+	require.NoError(t, err)
+	assert.True(t, len(svc.ListAcademies()) > 0)
+}
+

@@ -22,19 +22,22 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
 )
 
 // SkillServeRequest holds options for the OpenBuilder Skill Server.
 type SkillServeRequest struct {
-	ListenAddr   string
-	ChannelID    string
-	AIProvider   ai.Provider
-	Agent        agent.Agent
-	BusService   *academy.Service
-	Scheduler    *scheduler.Engine
-	SessionStore agent.SessionStore
-	SystemPrompt string
-	Out          io.Writer
+	ListenAddr    string
+	ChannelID     string
+	AIProvider    ai.Provider
+	Agent         agent.Agent
+	BusService    *academy.Service
+	SchoolService *school.Service
+	Scheduler     *scheduler.Engine
+	SessionStore  agent.SessionStore
+	SystemPrompt  string
+	DataDir       string
+	Out           io.Writer
 }
 
 var userLocks sync.Map
@@ -122,7 +125,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 		reqCtx, reqCancel := context.WithTimeout(r.Context(), 4200*time.Millisecond)
 		defer reqCancel()
 
-		respPayload := processUtterance(reqCtx, utterance, userID, req.ChannelID, req.BusService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
+		respPayload := processUtterance(reqCtx, utterance, userID, req.ChannelID, req.BusService, req.SchoolService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
 		if respPayload != nil {
 			respPayload.ValidateAndNormalize()
 		}
@@ -148,6 +151,15 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
+	if req.DataDir != "" {
+		fmt.Fprintf(out, "  - Data Directory:   %s\n", req.DataDir)
+	}
+	if req.BusService != nil {
+		fmt.Fprintf(out, "  - Academy Bus Lines: %d routes registered\n", len(req.BusService.ListAcademies()))
+	}
+	if req.SchoolService != nil && req.SchoolService.GetSummary() != "" {
+		fmt.Fprintf(out, "  - School Timetables: %s\n", req.SchoolService.GetSummary())
+	}
 	if req.Scheduler != nil {
 		fmt.Fprintf(out, "  - Cron Scheduler: Active (%d jobs loaded)\n", len(req.Scheduler.ListAllJobs()))
 	}
@@ -175,7 +187,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(ctx context.Context, utterance, userID, channelID string, busSvc *academy.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, sessionStore agent.SessionStore, systemPrompt string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, userID, channelID string, busSvc *academy.Service, schoolSvc *school.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, sessionStore agent.SessionStore, systemPrompt string) *openbuilder.SkillResponse {
 	text := strings.ToLower(strings.TrimSpace(utterance))
 
 	// 1. Conversation Reset Command
@@ -203,6 +215,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 			"🤖 안녕하세요! 0xc0de1ab AI 챗봇입니다.\n\n" +
 				"💡 사용 가능한 질문 예시:\n" +
 				"• 🚌 정상어학원 우미린 2차 버스 몇 시에 와?\n" +
+				"• 🏫 오늘 학교 시간표 알려줘 / 학급 규칙\n" +
 				"• ⏰ 매주 평일 15:00에 버스 출발 알림 등록해줘\n" +
 				"• 📋 등록된 알림 목록 보여줘\n" +
 				"• 💬 서버 상태 확인해줘\n" +
@@ -210,6 +223,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 				"궁금하신 내용을 카카오톡 메시지로 편하게 물어보세요!",
 		)
 		resp.AddQuickReply("정상어학원 버스", "정상어학원 2호차 버스 시간표 알려줘")
+		resp.AddQuickReply("학교 시간표", "오늘 학교 시간표 알려줘")
 		resp.AddQuickReply("알림 목록", "알림 목록")
 		resp.AddQuickReply("서버 상태", "상태")
 		return resp
@@ -296,8 +310,15 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 	}
 
 	// 3. Fast Path for direct single-intent questions (sub-millisecond response)
-	if busSvc != nil && isBusQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
+	if busSvc != nil && isBusQuery(busSvc, text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
 		if resp := handleBusScheduleFastPath(busSvc, text); resp != nil {
+			appendFastPathTurn(sessionStore, userID, utterance, resp)
+			return resp
+		}
+	}
+
+	if schoolSvc != nil && isSchoolQuery(text) && !strings.Contains(text, "알림") && !strings.Contains(text, "예약") {
+		if resp := handleSchoolTimetableFastPath(schoolSvc, text); resp != nil {
 			appendFastPathTurn(sessionStore, userID, utterance, resp)
 			return resp
 		}
@@ -410,14 +431,80 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 	return resp
 }
 
-func isBusQuery(text string) bool {
-	keywords := []string{"버스", "시간표", "정류장", "등원", "하원", "기사", "셔틀", "차량", "탑승", "우미린", "양포", "해마루", "현진", "이편한", "중흥", "호반", "원당", "정상어학원", "정상"}
+func isBusQuery(busSvc *academy.Service, text string) bool {
+	if busSvc != nil && busSvc.HasBusQuery(text) {
+		return true
+	}
+	keywords := []string{"버스", "정류장", "등원", "하원", "기사", "셔틀", "차량", "탑승"}
 	for _, kw := range keywords {
 		if strings.Contains(text, kw) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSchoolQuery(text string) bool {
+	keywords := []string{"학교", "교시", "하교", "등교", "수업", "규칙", "학급규칙", "생활규칙"}
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func handleSchoolTimetableFastPath(schoolSvc *school.Service, text string) *openbuilder.SkillResponse {
+	if schoolSvc == nil {
+		return nil
+	}
+
+	tt := schoolSvc.GetTimetable()
+	if tt == nil {
+		return nil
+	}
+
+	// 1. Rules query
+	if strings.Contains(text, "규칙") {
+		if len(tt.ClassRules.Rules) == 0 {
+			return nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("📋 %s (%d학년 %d반)\n\n", tt.ClassRules.Title, tt.Grade, tt.ClassNumber))
+		for i, r := range tt.ClassRules.Rules {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, r))
+		}
+		resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
+		resp.AddQuickReply("오늘 시간표", "오늘 학교 시간표 알려줘")
+		resp.AddQuickReply("내일 시간표", "내일 학교 시간표 알려줘")
+		resp.AddQuickReply("도움말", "도움말")
+		return resp
+	}
+
+	// 2. Schedule query for specific day
+	daySched, _, err := schoolSvc.GetScheduleForDay(text)
+	if err != nil || daySched == nil {
+		return nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🏫 %s [%s 시간표]\n\n", tt.Title, daySched.DayName))
+	for _, item := range daySched.Schedule {
+		if item.Period != nil {
+			sb.WriteString(fmt.Sprintf("  • %d교시 (%s): %s\n", *item.Period, item.Time, item.Subject))
+		} else {
+			sb.WriteString(fmt.Sprintf("  • %s: %s\n", item.Subject, item.Time))
+		}
+	}
+	if daySched.DismissalTime != "" {
+		sb.WriteString(fmt.Sprintf("\n🔔 하교 시간: %s", daySched.DismissalTime))
+	}
+
+	resp := openbuilder.NewSimpleTextResponse(strings.TrimSpace(sb.String()))
+	resp.AddQuickReply("내일 시간표", "내일 학교 시간표 알려줘")
+	resp.AddQuickReply("학급 규칙", "학급 생활 규칙 알려줘")
+	resp.AddQuickReply("도움말", "도움말")
+	return resp
 }
 
 func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {

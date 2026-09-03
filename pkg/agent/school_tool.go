@@ -24,7 +24,13 @@ func (t *SchoolTimetableTool) Name() string {
 }
 
 func (t *SchoolTimetableTool) Description() string {
-	return "Lookup the elementary school class timetable (6학년 9반), daily subjects, period times (1~6교시, 점심시간, 아침활동), dismissal/finish times, weekly subject hours, and classroom rules. Call this whenever the user asks about school schedule (e.g. '오늘 학교 시간표', '화요일 3교시 무슨 과목', '오늘 몇 교시에 끝나?', '수요일 하교 시간')."
+	classes := "6학년 9반"
+	if t.svc != nil {
+		if summary := t.svc.GetSummary(); summary != "" {
+			classes = summary
+		}
+	}
+	return fmt.Sprintf("Lookup elementary school class timetables (%s), daily subjects, period times (1~6교시, 점심시간, 아침활동), dismissal/finish times, weekly subject hours, and classroom rules. Call this whenever the user asks about school schedule (e.g. '오늘 학교 시간표', '화요일 3교시 무슨 과목', '오늘 몇 교시에 끝나?', '수요일 하교 시간').", classes)
 }
 
 func (t *SchoolTimetableTool) ParametersSchema() map[string]interface{} {

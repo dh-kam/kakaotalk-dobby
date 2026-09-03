@@ -41,6 +41,7 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 		AWSAccessKey string `flag:"aws-access-key" usage:"AWS Access Key ID"`
 		AWSSecretKey string `flag:"aws-secret-key" usage:"AWS Secret Access Key"`
 		Prompt       string `flag:"prompt" usage:"User instruction / query for the agent"`
+		DataDir      string `flag:"data-dir" usage:"Directory containing schedule and timetable JSON data files"`
 		ClientID     string `flag:"client-id" usage:"Kakao REST API Key"`
 		ClientSecret string `flag:"client-secret" usage:"Kakao Client Secret"`
 		RedirectURI  string `flag:"redirect-uri" usage:"Kakao OAuth Redirect URI"`
@@ -59,6 +60,7 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 		String("aws-access-key", "", "AWS Access Key ID").
 		String("aws-secret-key", "", "AWS Secret Access Key").
 		String("prompt", "", "User instruction / query for the agent").
+		String("data-dir", cfg.DataDir, "Directory containing schedule and timetable JSON data files").
 		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
 		String("client-secret", cfg.ClientSecret, "Kakao Client Secret").
 		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
@@ -103,6 +105,7 @@ func newAgentRunCommand(ctx context.Context) *cobra.Command {
 				ClientSecret: opts.ClientSecret,
 				RedirectURI:  opts.RedirectURI,
 				TokenPath:    opts.TokenPath,
+				DataDir:      opts.DataDir,
 				Out:          cmd.OutOrStdout(),
 			})
 		},

@@ -41,3 +41,23 @@ func TestSchoolService_LoadAndQuery(t *testing.T) {
 	_, _, err = svc.GetScheduleForDay("토요일")
 	assert.Error(t, err)
 }
+
+func TestSchoolService_LoadFromDirAndReload(t *testing.T) {
+	dir := filepath.Join("..", "..", "data", "schedules")
+	svc := NewService()
+	err := svc.LoadFromDir(dir)
+	require.NoError(t, err)
+
+	summary := svc.GetSummary()
+	assert.Contains(t, summary, "6학년 9반")
+
+	tt := svc.GetTimetable()
+	require.NotNil(t, tt)
+	assert.Equal(t, 6, tt.Grade)
+
+	// Test reload
+	err = svc.ReloadFromDir(dir)
+	require.NoError(t, err)
+	assert.Contains(t, svc.GetSummary(), "6학년 9반")
+}
+

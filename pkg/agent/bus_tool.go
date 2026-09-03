@@ -24,7 +24,14 @@ func (t *BusScheduleTool) Name() string {
 }
 
 func (t *BusScheduleTool) Description() string {
-	return "Lookup academy shuttle bus departure and boarding schedules by academy name (e.g. 정상어학원, 강의하는아이들), boarding stop location (e.g. 우미린2차/우미린더스카이, 양포도서관, 해마루초), vehicle number (e.g. 2호차), or class time. Note: '우미린더스카이' and '더스카이' refer to '우미린2차'."
+	academies := "정상어학원, 강의하는아이들"
+	if t.svc != nil {
+		list := t.svc.ListAcademies()
+		if len(list) > 0 {
+			academies = strings.Join(list, ", ")
+		}
+	}
+	return fmt.Sprintf("Lookup academy shuttle bus departure and boarding schedules by academy name (registered: %s), boarding stop location (e.g. 우미린2차/우미린더스카이, 양포도서관, 해마루초), vehicle number (e.g. 2호차), or class time. Note: '우미린더스카이' and '더스카이' refer to '우미린2차'.", academies)
 }
 
 func (t *BusScheduleTool) ParametersSchema() map[string]interface{} {

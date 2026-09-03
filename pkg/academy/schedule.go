@@ -121,6 +121,16 @@ func (s *Service) LoadFromDir(dirPath string) error {
 	return nil
 }
 
+// ReloadFromDir clears in-memory schedules and reloads all schedule JSON files from the directory.
+func (s *Service) ReloadFromDir(dirPath string) error {
+	s.mu.Lock()
+	s.schedules = make([]*BusSchedule, 0)
+	s.seen = make(map[string]bool)
+	s.mu.Unlock()
+
+	return s.LoadFromDir(dirPath)
+}
+
 // AddSchedule adds an in-memory schedule without duplicates.
 func (s *Service) AddSchedule(sched *BusSchedule) {
 	s.mu.Lock()
@@ -244,5 +254,31 @@ func (s *Service) matchStopLocation(stop StopInfo, q string) bool {
 		return true
 	}
 
+	return false
+}
+
+// HasBusQuery checks if text matches common bus/shuttle keywords, or any registered academy/stop names or aliases.
+func (s *Service) HasBusQuery(text string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	clean := strings.ToLower(strings.TrimSpace(text))
+	commonKeywords := []string{"버스", "시간표", "정류장", "등원", "하원", "기사", "셔틀", "차량", "탑승"}
+	for _, kw := range commonKeywords {
+		if strings.Contains(clean, kw) {
+			return true
+		}
+	}
+
+	for _, sched := range s.schedules {
+		if s.matchAcademy(sched.Academy, clean) {
+			return true
+		}
+		for _, stop := range sched.Stops {
+			if s.matchStopLocation(stop, clean) {
+				return true
+			}
+		}
+	}
 	return false
 }

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
@@ -79,7 +81,16 @@ type ClassRulesInfo struct {
 
 // Service provides access to school timetable information.
 type Service struct {
-	timetable *Timetable
+	mu         sync.RWMutex
+	timetable  *Timetable
+	timetables map[string]*Timetable
+}
+
+// NewService creates an empty school timetable Service.
+func NewService() *Service {
+	return &Service{
+		timetables: make(map[string]*Timetable),
+	}
 }
 
 // NewServiceFromFile loads a school timetable from a JSON file.
@@ -94,16 +105,96 @@ func NewServiceFromFile(filePath string) (*Service, error) {
 		return nil, fmt.Errorf("unmarshal school timetable: %w", err)
 	}
 
-	return &Service{timetable: &tt}, nil
+	svc := NewService()
+	svc.timetable = &tt
+	key := fmt.Sprintf("%d-%d", tt.Grade, tt.ClassNumber)
+	svc.timetables[key] = &tt
+	return svc, nil
 }
 
-// GetTimetable returns the raw timetable model.
+// LoadFromDir scans a directory and loads all school timetable JSON files.
+func (s *Service) LoadFromDir(dirPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("read school timetable dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(dirPath, entry.Name())
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		var tt Timetable
+		if err := json.Unmarshal(data, &tt); err != nil {
+			continue
+		}
+
+		// Valid school timetable must have grade, class, and weekly timetable
+		if tt.Grade > 0 && tt.ClassNumber > 0 && len(tt.WeeklyTimetable) > 0 {
+			key := fmt.Sprintf("%d-%d", tt.Grade, tt.ClassNumber)
+			if s.timetables == nil {
+				s.timetables = make(map[string]*Timetable)
+			}
+			s.timetables[key] = &tt
+			if s.timetable == nil {
+				s.timetable = &tt
+			}
+		}
+	}
+
+	return nil
+}
+
+// ReloadFromDir clears current timetables and reloads all school timetable JSON files from the directory.
+func (s *Service) ReloadFromDir(dirPath string) error {
+	s.mu.Lock()
+	s.timetable = nil
+	s.timetables = make(map[string]*Timetable)
+	s.mu.Unlock()
+
+	return s.LoadFromDir(dirPath)
+}
+
+// GetSummary returns a human-readable list of registered school classes.
+func (s *Service) GetSummary() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.timetables) == 0 {
+		if s.timetable != nil {
+			return fmt.Sprintf("%d학년도 %d학년 %d반 (%s)", s.timetable.SchoolYear, s.timetable.Grade, s.timetable.ClassNumber, s.timetable.Title)
+		}
+		return ""
+	}
+
+	var items []string
+	for _, tt := range s.timetables {
+		items = append(items, fmt.Sprintf("%d학년도 %d학년 %d반", tt.SchoolYear, tt.Grade, tt.ClassNumber))
+	}
+	return strings.Join(items, ", ")
+}
+
+// GetTimetable returns the primary or default timetable model.
 func (s *Service) GetTimetable() *Timetable {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.timetable
 }
 
 // GetScheduleForDay queries schedule for a given day query ("월", "화요일", "오늘", "내일", "wednesday", etc.)
 func (s *Service) GetScheduleForDay(dayQuery string) (*DaySchedule, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if s.timetable == nil {
 		return nil, "", fmt.Errorf("timetable data is not loaded")
 	}

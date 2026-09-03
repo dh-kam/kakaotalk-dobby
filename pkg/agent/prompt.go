@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
 )
 
 // BuildDynamicSystemPrompt injects live KST time, date, day of week, and holiday calendar context into the system prompt.
@@ -44,3 +46,28 @@ func BuildDynamicSystemPrompt(basePrompt string) string {
 
 	return sb.String()
 }
+
+// BuildDomainKnowledge dynamically inspects loaded academy bus routes and school timetables,
+// producing an up-to-date domain context string for the AI prompt.
+func BuildDomainKnowledge(busSvc *academy.Service, schoolSvc *school.Service) string {
+	var sb strings.Builder
+	sb.WriteString("=== Domain Knowledge & Active Data Catalogs ===\n")
+	sb.WriteString("- Boarding stop aliases: \"우미린 2차\" (or \"우미린2차\") is officially also known as \"우미린더스카이\" or \"더스카이\" (구미 산동 확장단지 우미린 센트럴파크/더스카이). When users ask about \"우미린더스카이\" or \"더스카이\", search for \"우미린2차\" bus stops. \"우미린 1차\" is known as \"우미린 풀하우스\".\n")
+
+	if busSvc != nil {
+		academies := busSvc.ListAcademies()
+		if len(academies) > 0 {
+			sb.WriteString(fmt.Sprintf("- Registered Academy Shuttle Bus Routes (%d registered): %s. Always call get_bus_schedule tool when users ask about departure/boarding times for these academies.\n", len(academies), strings.Join(academies, ", ")))
+		}
+	}
+
+	if schoolSvc != nil {
+		summary := schoolSvc.GetSummary()
+		if summary != "" {
+			sb.WriteString(fmt.Sprintf("- Registered School Timetables: %s. Call get_school_timetable when users ask about today's subjects, periods, dismissal time, or classroom rules.\n", summary))
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
