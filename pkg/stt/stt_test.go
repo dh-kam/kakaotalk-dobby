@@ -275,3 +275,21 @@ func TestOrchestrator_Concurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestGroqTranscriber_FileSizeLimit(t *testing.T) {
+	tempDir := t.TempDir()
+	largeAudio := filepath.Join(tempDir, "large.wav")
+
+	f, err := os.Create(largeAudio)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(26*1024*1024))
+	require.NoError(t, f.Close())
+
+	client := NewGroqTranscriber(GroqConfig{
+		APIKey: "test-key",
+	})
+
+	_, err = client.Transcribe(context.Background(), largeAudio, TranscribeOptions{})
+	assert.ErrorIs(t, err, ErrAudioTooLarge)
+}
+

@@ -31,12 +31,13 @@ func newSendMeCommand(ctx context.Context) *cobra.Command {
 	cfg := config.Load()
 
 	opts := struct {
+		Bot          string `flag:"bot" usage:"Target bot application name (e.g. dobby, infra)"`
 		ClientID     string `flag:"client-id" usage:"Kakao REST API Key"`
 		ClientSecret string `flag:"client-secret" usage:"Kakao Client Secret"`
 		RedirectURI  string `flag:"redirect-uri" usage:"Kakao OAuth Redirect URI"`
 		TokenPath    string `flag:"token-path" usage:"Path to token JSON file"`
 		Text         string `flag:"text" usage:"Message text content (can also be passed as arguments or piped)"`
-		WebURL       string `flag:"url" usage:"Target Web URL when clicking message or button"`
+		WebURL       string `flag:"url" usage:"Target WebURL when clicking message or button"`
 		ButtonTitle  string `flag:"button" usage:"Button title text"`
 		Title        string `flag:"title" usage:"Title for feed template message"`
 		Description  string `flag:"description" usage:"Description for feed template message"`
@@ -46,6 +47,7 @@ func newSendMeCommand(ctx context.Context) *cobra.Command {
 	}{}
 
 	binder := flagsbinder.NewViperCobraFlagsBinder().
+		String("bot", "", "Target bot application name (e.g. dobby, infra)").
 		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
 		String("client-secret", cfg.ClientSecret, "Kakao Client Secret (optional)").
 		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
@@ -68,6 +70,22 @@ func newSendMeCommand(ctx context.Context) *cobra.Command {
 			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
 				_ = cmd.Usage()
 				return err
+			}
+			if opts.Bot != "" {
+				if botCfg, ok := cfg.GetBotConfig(opts.Bot); ok {
+					if opts.ClientID == cfg.ClientID && botCfg.ClientID != "" {
+						opts.ClientID = botCfg.ClientID
+					}
+					if opts.ClientSecret == cfg.ClientSecret && botCfg.ClientSecret != "" {
+						opts.ClientSecret = botCfg.ClientSecret
+					}
+					if opts.RedirectURI == cfg.RedirectURI && botCfg.RedirectURI != "" {
+						opts.RedirectURI = botCfg.RedirectURI
+					}
+					if opts.TokenPath == cfg.TokenPath && botCfg.TokenPath != "" {
+						opts.TokenPath = botCfg.TokenPath
+					}
+				}
 			}
 			if len(args) > 0 && opts.Text == "" {
 				opts.Text = strings.Join(args, " ")
@@ -103,6 +121,7 @@ func newSendFriendCommand(ctx context.Context) *cobra.Command {
 	cfg := config.Load()
 
 	opts := struct {
+		Bot           string   `flag:"bot" usage:"Target bot application name (e.g. dobby, infra)"`
 		ClientID      string   `flag:"client-id" usage:"Kakao REST API Key"`
 		ClientSecret  string   `flag:"client-secret" usage:"Kakao Client Secret"`
 		RedirectURI   string   `flag:"redirect-uri" usage:"Kakao OAuth Redirect URI"`
@@ -119,6 +138,7 @@ func newSendFriendCommand(ctx context.Context) *cobra.Command {
 	}{}
 
 	binder := flagsbinder.NewViperCobraFlagsBinder().
+		String("bot", "", "Target bot application name (e.g. dobby, infra)").
 		StringP("client-id", "c", cfg.ClientID, "Kakao REST API Key").
 		String("client-secret", cfg.ClientSecret, "Kakao Client Secret (optional)").
 		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
@@ -142,6 +162,22 @@ func newSendFriendCommand(ctx context.Context) *cobra.Command {
 			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
 				_ = cmd.Usage()
 				return err
+			}
+			if opts.Bot != "" {
+				if botCfg, ok := cfg.GetBotConfig(opts.Bot); ok {
+					if opts.ClientID == cfg.ClientID && botCfg.ClientID != "" {
+						opts.ClientID = botCfg.ClientID
+					}
+					if opts.ClientSecret == cfg.ClientSecret && botCfg.ClientSecret != "" {
+						opts.ClientSecret = botCfg.ClientSecret
+					}
+					if opts.RedirectURI == cfg.RedirectURI && botCfg.RedirectURI != "" {
+						opts.RedirectURI = botCfg.RedirectURI
+					}
+					if opts.TokenPath == cfg.TokenPath && botCfg.TokenPath != "" {
+						opts.TokenPath = botCfg.TokenPath
+					}
+				}
 			}
 			if len(args) > 0 && opts.Text == "" {
 				opts.Text = strings.Join(args, " ")

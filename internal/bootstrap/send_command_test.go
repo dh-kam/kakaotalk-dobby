@@ -65,7 +65,23 @@ func TestSendMeCommand_Execution(t *testing.T) {
 	})
 
 	// Inject test server URL into client via env / args or test execution
-	// Note: newSendMeCommand uses pkg/kakao default URL. Let's verify flags binding and PreRunE!
 	err = cmd.PreRunE(cmd, []string{"--token-path", tokenPath, "--text", "Test message"})
 	assert.NoError(t, err)
+}
+
+func TestSendMeCommand_BotFlag(t *testing.T) {
+	t.Setenv("KAKAO_BOTS", "dobby,infra")
+	t.Setenv("KAKAO_BOT_INFRA_REST_API_KEY", "infra-api-key")
+	t.Setenv("KAKAO_BOT_INFRA_TOKEN_PATH", "/tmp/infra-tokens.json")
+
+	cmd := newSendMeCommand(context.Background())
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{
+		"--bot", "infra",
+		"--text", "Alert message",
+	})
+
+	err := cmd.PreRunE(cmd, []string{})
+	require.NoError(t, err)
 }

@@ -213,6 +213,11 @@ func ResolveLatestGeminiFlashModel(ctx context.Context, cfg VertexConfig) string
 		return EnforceGeminiMinimumVersion(model)
 	}
 
+	// Fast path for Vertex Express Mode (APIKey only): Express Mode does not expose publisher catalog
+	if cfg.APIKey != "" && cfg.BearerToken == "" && cfg.CustomBaseURL == "" {
+		return DefaultLatestGeminiFlashModel
+	}
+
 	// Check cache
 	cachedModelMu.RLock()
 	if cachedResolvedModel != "" && time.Now().Before(cachedModelExpiry) {
@@ -235,6 +240,11 @@ func ResolveLatestGeminiFlashModel(ctx context.Context, cfg VertexConfig) string
 		}
 	}
 
-	// Fallback to verified latest default
+	// Negative cache fallback to verified latest default (15-minute backoff to protect SLA)
+	cachedModelMu.Lock()
+	cachedResolvedModel = DefaultLatestGeminiFlashModel
+	cachedModelExpiry = time.Now().Add(15 * time.Minute)
+	cachedModelMu.Unlock()
+
 	return DefaultLatestGeminiFlashModel
 }

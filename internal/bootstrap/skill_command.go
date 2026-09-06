@@ -114,14 +114,12 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				store = fileStore
 			}
 
+			kakaoRegistry, _ := runtimeCfg.BuildKakaoRegistry()
 			var kakaoClient kakao.Client
-			if runtimeCfg.ClientID != "" {
-				kakaoClient = kakao.NewClient(kakao.ClientConfig{
-					ClientID:     runtimeCfg.ClientID,
-					ClientSecret: runtimeCfg.ClientSecret,
-					RedirectURI:  runtimeCfg.RedirectURI,
-					TokenStore:   kakao.NewFileTokenStore(runtimeCfg.TokenPath),
-				})
+			if kakaoRegistry != nil && kakaoRegistry.Count() > 0 {
+				kakaoClient, _ = kakaoRegistry.GetDefault()
+			} else if runtimeCfg.ClientID != "" {
+				kakaoClient = runtimeCfg.BuildKakaoClient()
 			}
 			dispatcher := scheduler.NewDispatcher(kakaoClient)
 			schedEngine := scheduler.NewEngine(store, dispatcher.HandleJob)
@@ -180,6 +178,7 @@ Always answer politely, naturally, and concisely in Korean formatted for mobile 
 				BusService:             busSvc,
 				SchoolService:          schoolSvc,
 				Scheduler:              schedEngine,
+				KakaoRegistry:          kakaoRegistry,
 				SessionStore:           agent.NewMemorySessionStore(50),
 				SystemPrompt:           opts.AISystemPrompt,
 				DataDir:                opts.DataDir,

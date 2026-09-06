@@ -256,4 +256,12 @@ func TestAdminAPI_CatalogsAndDeletion(t *testing.T) {
 	assert.Equal(t, http.StatusOK, delResp.StatusCode)
 	assert.NoFileExists(t, testFile)
 	assert.Empty(t, busSvc.ListAcademies())
+
+	// 4. Attempt to delete jobs.json -> should be forbidden (403)
+	delJobsReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/data/files?filename=jobs.json", nil)
+	delJobsReq.Header.Set("X-Admin-Token", "test-token")
+	delJobsResp, err := http.DefaultClient.Do(delJobsReq)
+	require.NoError(t, err)
+	defer delJobsResp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, delJobsResp.StatusCode)
 }

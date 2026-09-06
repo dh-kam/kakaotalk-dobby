@@ -87,6 +87,14 @@ func (g *groqTranscriber) Transcribe(ctx context.Context, audioPath string, opts
 	}
 	defer file.Close()
 
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat audio file: %w", err)
+	}
+	if info.Size() > 25*1024*1024 {
+		return nil, ErrAudioTooLarge
+	}
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 

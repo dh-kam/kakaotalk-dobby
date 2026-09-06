@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM alpine:${ALPINE_VERSION}
 
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata ffmpeg \
     && addgroup -S kakaobot \
     && adduser -S -G kakaobot -u 10001 kakaobot \
     && mkdir -p /home/kakaobot/.config/kakao-bot /home/kakaobot/data \

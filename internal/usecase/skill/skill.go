@@ -20,6 +20,7 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/agent"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
+	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
@@ -35,6 +36,7 @@ type SkillServeRequest struct {
 	BusService             *academy.Service
 	SchoolService          *school.Service
 	Scheduler              *scheduler.Engine
+	KakaoRegistry          kakao.ClientRegistry
 	SessionStore           agent.SessionStore
 	SystemPrompt           string
 	DataDir                string
@@ -46,14 +48,63 @@ type SkillServeRequest struct {
 	Out                    io.Writer
 }
 
-var userLocks sync.Map
+type userLockItem struct {
+	sem        chan struct{}
+	lastActive time.Time
+}
 
-// lockUser returns an unlocker function that serializes requests for the given userID.
-func lockUser(userID string) func() {
-	val, _ := userLocks.LoadOrStore(userID, &sync.Mutex{})
-	mu := val.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+type userLockManager struct {
+	mu    sync.Mutex
+	locks map[string]*userLockItem
+}
+
+var globalUserLocks = &userLockManager{
+	locks: make(map[string]*userLockItem),
+}
+
+func (m *userLockManager) tryLock(ctx context.Context, userID string, waitDuration time.Duration) (func(), bool) {
+	if userID == "" || userID == "anonymous" {
+		return func() {}, true
+	}
+
+	m.mu.Lock()
+	// Periodic cleanup of idle locks if map grows large
+	if len(m.locks) > 200 {
+		cutoff := time.Now().Add(-10 * time.Minute)
+		for k, v := range m.locks {
+			if v.lastActive.Before(cutoff) && len(v.sem) == 0 {
+				delete(m.locks, k)
+			}
+		}
+	}
+
+	item, exists := m.locks[userID]
+	if !exists {
+		item = &userLockItem{
+			sem: make(chan struct{}, 1),
+		}
+		m.locks[userID] = item
+	}
+	item.lastActive = time.Now()
+	sem := item.sem
+	m.mu.Unlock()
+
+	timer := time.NewTimer(waitDuration)
+	defer timer.Stop()
+
+	select {
+	case sem <- struct{}{}:
+		return func() {
+			select {
+			case <-sem:
+			default:
+			}
+		}, true
+	case <-timer.C:
+		return nil, false
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 // SkillServeUseCase runs the HTTP skill webhook server with AI integration.
@@ -157,13 +208,17 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			return
 		}
 
-		// Serialize concurrent turns per user to preserve chronological dialogue order
-		unlock := lockUser(userID)
-		defer unlock()
-
 		// Enforce a strict 4.2s global deadline to guarantee Kakao 5.0s SLA compliance
 		reqCtx, reqCancel := context.WithTimeout(r.Context(), 4200*time.Millisecond)
 		defer reqCancel()
+
+		// Serialize concurrent turns per user with an 800ms acquisition window
+		unlock, locked := globalUserLocks.tryLock(reqCtx, userID, 800*time.Millisecond)
+		if !locked {
+			writeSkillJSON(w, openbuilder.NewSimpleTextResponse("⏳ 이전 질문에 대한 답변을 준비하고 있습니다. 잠시 후 다시 말씀해 주세요!"))
+			return
+		}
+		defer unlock()
 
 		respPayload := processUtterance(reqCtx, utterance, userID, req.ChannelID, req.DataDir, req.AdminToken, req.BusService, req.SchoolService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt, slashRegistry)
 		if respPayload != nil {
@@ -180,6 +235,11 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	mux.HandleFunc("/api/data/catalogs", newAdminCatalogsHandler(req.DataDir, req.AdminToken, req.BusService, req.SchoolService))
 	mux.HandleFunc("/api/data/files", newAdminDeleteHandler(req.DataDir, req.AdminToken, req.BusService, req.SchoolService))
 
+	notifyHandler := newNotifyHandler(req.KakaoRegistry, req.AdminToken, req.ChannelID)
+	mux.HandleFunc("/api/message/send", notifyHandler)
+	mux.HandleFunc("/api/notify", notifyHandler)
+	mux.HandleFunc("/api/message/bots", newBotsListHandler(req.KakaoRegistry, req.AdminToken))
+
 	server := &http.Server{
 		Addr:              req.ListenAddr,
 		Handler:           mux,
@@ -191,6 +251,8 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 
 	fmt.Fprintf(out, "🚀 Kakao i OpenBuilder Skill Server is running on %s\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Message API: http://%s/api/message/send (POST, admin auth)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Bots API:    http://%s/api/message/bots (GET, admin auth)\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
 	if cb.Enabled {

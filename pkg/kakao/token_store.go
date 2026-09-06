@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 var ErrTokenNotFound = errors.New("kakao token not found")
@@ -69,8 +70,33 @@ func (s *FileTokenStore) Save(ctx context.Context, token *TokenInfo) error {
 		return fmt.Errorf("marshal token: %w", err)
 	}
 
-	if err := os.WriteFile(s.path, data, 0600); err != nil {
-		return fmt.Errorf("write token file %q: %w", s.path, err)
+	// Atomic write using temp file and rename to prevent corrupted tokens on crash
+	tmpFile := fmt.Sprintf("%s.tmp.%d", s.path, time.Now().UnixNano())
+	f, err := os.OpenFile(tmpFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("create temp token file: %w", err)
+	}
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("write temp token file: %w", err)
+	}
+
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("sync temp token file: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("close temp token file: %w", err)
+	}
+
+	if err := os.Rename(tmpFile, s.path); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("rename token file %q: %w", s.path, err)
 	}
 
 	return nil

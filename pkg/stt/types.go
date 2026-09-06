@@ -15,6 +15,8 @@ var (
 	ErrFallbackDisabled = errors.New("stt: groq quota or rate limit exceeded and local fallback is disabled")
 	// ErrAudioFileNotFound is returned when the audio file cannot be found.
 	ErrAudioFileNotFound = errors.New("stt: audio file not found")
+	// ErrAudioTooLarge is returned when the audio file exceeds provider limit (25MB).
+	ErrAudioTooLarge = errors.New("stt: audio file exceeds 25MB limit")
 )
 
 // TranscribeOptions specifies parameters for speech-to-text recognition.

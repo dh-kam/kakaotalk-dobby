@@ -44,11 +44,16 @@ func TestCallbackEligible(t *testing.T) {
 	}{
 		{"empty", "", false},
 		{"blank", "   ", false},
-		{"https allowed", "https://kakao.example/callback", true},
+		{"https kakao bot-api allowed", "https://bot-api.kakao.com/v2/bot/callback", true},
+		{"https kakaowork allowed", "https://api.kakaowork.com/callback", true},
+		{"https 0xc0de1ab allowed", "https://webhook.0xc0de1ab.dev/callback", true},
+		{"https evil rejected (SSRF defense)", "https://evil.example/callback", false},
+		{"https metadata ip rejected (SSRF defense)", "https://169.254.169.254/computeMetadata/v1", false},
+		{"https internal k8s rejected (SSRF defense)", "https://kubernetes.default.svc:443", false},
 		{"http loopback allowed", "http://127.0.0.1:9999/cb", true},
 		{"http localhost allowed", "http://localhost:9999/cb", true},
-		{"http external rejected", "http://evil.example/callback", false},
-		{"ftp rejected", "ftp://kakao.example/callback", false},
+		{"http external rejected", "http://bot-api.kakao.com/callback", false},
+		{"ftp rejected", "ftp://bot-api.kakao.com/callback", false},
 		{"garbage rejected", "not a url", false},
 	}
 	for _, tt := range tests {

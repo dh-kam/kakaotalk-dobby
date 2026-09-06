@@ -320,3 +320,37 @@ func TestAdversarial_ConcurrentHammerAndAtomicReload(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TestAdversarial_RapidConcurrentTurns_TryLockSLAPreservation verifies that when a user sends
+// two requests in rapid succession, the second request does NOT block indefinitely and breach
+// Kakao's 5s SLA, but instead returns a prompt graceful response within the SLA budget.
+func TestAdversarial_RapidConcurrentTurns_TryLockSLAPreservation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	user := "rapid-user-123"
+
+	// Simulate first request acquiring the lock
+	unlock1, ok1 := globalUserLocks.tryLock(ctx, user, 200*time.Millisecond)
+	require.True(t, ok1)
+	defer unlock1()
+
+	// Second request arrives and tries to acquire lock with 100ms wait budget
+	start := time.Now()
+	unlock2, ok2 := globalUserLocks.tryLock(ctx, user, 100*time.Millisecond)
+	duration := time.Since(start)
+
+	assert.False(t, ok2, "second concurrent request must fail to acquire lock within wait budget")
+	assert.Nil(t, unlock2)
+	assert.Less(t, duration, 300*time.Millisecond, "must abort wait quickly without hanging")
+
+	// Anonymous requests should never be blocked by another anonymous request
+	unlockAnon1, okAnon1 := globalUserLocks.tryLock(ctx, "anonymous", 50*time.Millisecond)
+	require.True(t, okAnon1)
+	defer unlockAnon1()
+
+	unlockAnon2, okAnon2 := globalUserLocks.tryLock(ctx, "anonymous", 50*time.Millisecond)
+	require.True(t, okAnon2)
+	defer unlockAnon2()
+}
+

@@ -7,7 +7,18 @@ import (
 
 	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/kakao"
+	"github.com/samber/lo"
 )
+
+// BotConfig holds configuration for a specific Kakao bot application.
+type BotConfig struct {
+	Name         string
+	ClientID     string
+	ClientSecret string
+	RedirectURI  string
+	TokenPath    string
+	IsDefault    bool
+}
 
 // AppConfig contains common application configuration.
 type AppConfig struct {
@@ -15,6 +26,9 @@ type AppConfig struct {
 	ClientSecret string
 	RedirectURI  string
 	TokenPath    string
+
+	DefaultBot string
+	Bots       map[string]BotConfig
 
 	AIProvider     string
 	AIAPIKey       string
@@ -155,7 +169,93 @@ func Load() *AppConfig {
 		cfg.AISystemPrompt = "You are a helpful and intelligent AI assistant for the KakaoTalk channel @0xc0de1ab. Keep your responses concise, friendly, and formatted nicely for mobile chat screens."
 	}
 
+	defaultBot := strings.ToLower(strings.TrimSpace(os.Getenv("KAKAO_DEFAULT_BOT")))
+	if defaultBot == "" {
+		defaultBot = "dobby"
+	}
+	cfg.DefaultBot = defaultBot
+	cfg.Bots = loadBots(cfg.ClientID, cfg.ClientSecret, cfg.RedirectURI, cfg.TokenPath, defaultBot)
+
 	return cfg
+}
+
+func loadBots(baseClientID, baseSecret, baseRedirect, baseTokenPath, defaultBot string) map[string]BotConfig {
+	bots := make(map[string]BotConfig)
+	rawBots := os.Getenv("KAKAO_BOTS")
+
+	if rawBots != "" {
+		names := lo.Filter(strings.Split(rawBots, ","), func(s string, _ int) bool {
+			return strings.TrimSpace(s) != ""
+		})
+
+		for _, rawName := range names {
+			name := strings.ToLower(strings.TrimSpace(rawName))
+			nameUpper := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+
+			clientID := os.Getenv("KAKAO_BOT_" + nameUpper + "_REST_API_KEY")
+			if clientID == "" {
+				clientID = os.Getenv("KAKAO_" + nameUpper + "_REST_API_KEY")
+			}
+			if clientID == "" && (name == defaultBot || name == "default") {
+				clientID = baseClientID
+			}
+
+			clientSecret := os.Getenv("KAKAO_BOT_" + nameUpper + "_CLIENT_SECRET")
+			if clientSecret == "" {
+				clientSecret = os.Getenv("KAKAO_" + nameUpper + "_CLIENT_SECRET")
+			}
+			if clientSecret == "" && (name == defaultBot || name == "default") {
+				clientSecret = baseSecret
+			}
+
+			redirectURI := os.Getenv("KAKAO_BOT_" + nameUpper + "_REDIRECT_URI")
+			if redirectURI == "" {
+				redirectURI = os.Getenv("KAKAO_" + nameUpper + "_REDIRECT_URI")
+			}
+			if redirectURI == "" {
+				redirectURI = baseRedirect
+			}
+
+			tokenPath := os.Getenv("KAKAO_BOT_" + nameUpper + "_TOKEN_PATH")
+			if tokenPath == "" {
+				tokenPath = os.Getenv("KAKAO_" + nameUpper + "_TOKEN_PATH")
+			}
+			if tokenPath == "" && (name == defaultBot || name == "default") && baseTokenPath != "" {
+				tokenPath = baseTokenPath
+			}
+			if tokenPath == "" {
+				tokenPath = kakao.BotTokenPath(name, "")
+			}
+
+			isDef := name == defaultBot || (len(bots) == 0 && defaultBot == "")
+
+			bots[name] = BotConfig{
+				Name:         name,
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
+				RedirectURI:  redirectURI,
+				TokenPath:    tokenPath,
+				IsDefault:    isDef,
+			}
+		}
+	}
+
+	if len(bots) == 0 && baseClientID != "" {
+		botName := defaultBot
+		if botName == "" {
+			botName = "default"
+		}
+		bots[botName] = BotConfig{
+			Name:         botName,
+			ClientID:     baseClientID,
+			ClientSecret: baseSecret,
+			RedirectURI:  baseRedirect,
+			TokenPath:    baseTokenPath,
+			IsDefault:    true,
+		}
+	}
+
+	return bots
 }
 
 func loadDotEnv(filename string) {
@@ -184,10 +284,78 @@ func loadDotEnv(filename string) {
 	}
 }
 
-// BuildKakaoClient constructs a kakao.Client interface from configuration.
-func (c *AppConfig) BuildKakaoClient() kakao.Client {
-	tokenStore := kakao.NewFileTokenStore(c.TokenPath)
+// GetBotConfig retrieves configuration for a specific bot by name.
+func (c *AppConfig) GetBotConfig(name string) (BotConfig, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	if normalized == "" || normalized == "default" {
+		if c.DefaultBot != "" {
+			if cfg, ok := c.Bots[c.DefaultBot]; ok {
+				return cfg, true
+			}
+		}
+		for _, b := range c.Bots {
+			if b.IsDefault {
+				return b, true
+			}
+		}
+		if len(c.Bots) > 0 {
+			for _, b := range c.Bots {
+				return b, true
+			}
+		}
+		return BotConfig{
+			Name:         "default",
+			ClientID:     c.ClientID,
+			ClientSecret: c.ClientSecret,
+			RedirectURI:  c.RedirectURI,
+			TokenPath:    c.TokenPath,
+			IsDefault:    true,
+		}, true
+	}
 
+	cfg, ok := c.Bots[normalized]
+	return cfg, ok
+}
+
+// BuildKakaoRegistry constructs a kakao.ClientRegistry from configuration.
+func (c *AppConfig) BuildKakaoRegistry() (kakao.ClientRegistry, error) {
+	registry := kakao.NewClientRegistry()
+
+	for name, botCfg := range c.Bots {
+		tokenStore := kakao.NewFileTokenStore(botCfg.TokenPath)
+		client := kakao.NewClient(kakao.ClientConfig{
+			ClientID:     botCfg.ClientID,
+			ClientSecret: botCfg.ClientSecret,
+			RedirectURI:  botCfg.RedirectURI,
+			TokenStore:   tokenStore,
+		})
+		registry.Register(name, client, botCfg.IsDefault)
+	}
+
+	if registry.Count() == 0 && c.ClientID != "" {
+		tokenStore := kakao.NewFileTokenStore(c.TokenPath)
+		client := kakao.NewClient(kakao.ClientConfig{
+			ClientID:     c.ClientID,
+			ClientSecret: c.ClientSecret,
+			RedirectURI:  c.RedirectURI,
+			TokenStore:   tokenStore,
+		})
+		registry.Register("default", client, true)
+	}
+
+	return registry, nil
+}
+
+// BuildKakaoClient constructs the primary kakao.Client interface from configuration.
+func (c *AppConfig) BuildKakaoClient() kakao.Client {
+	reg, err := c.BuildKakaoRegistry()
+	if err == nil && reg.Count() > 0 {
+		if client, err := reg.GetDefault(); err == nil {
+			return client
+		}
+	}
+
+	tokenStore := kakao.NewFileTokenStore(c.TokenPath)
 	return kakao.NewClient(kakao.ClientConfig{
 		ClientID:     c.ClientID,
 		ClientSecret: c.ClientSecret,

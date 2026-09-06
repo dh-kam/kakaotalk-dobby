@@ -48,10 +48,26 @@ func newCallbackConfig(enabled bool, waitingMessage string, processingTime time.
 	}
 }
 
+var allowedCallbackDomains = []string{
+	"kakao.com",
+	"kakaowork.com",
+	"daum.net",
+	"0xc0de1ab.dev",
+}
+
+func isAllowedDomain(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, domain := range allowedCallbackDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
+}
+
 // callbackEligible reports whether the URL may be used for callback delivery.
-// The URL is issued by Kakao, but the endpoint is attacker-controllable input:
-// a forged payload must not turn the skill server into a relay, so plain HTTP
-// is tolerated only for loopback hosts (local testing).
+// It strictly validates that external targets are HTTPS and belong to legitimate
+// Kakao platform or authorized domains, preventing Server-Side Request Forgery (SSRF).
 func callbackEligible(rawURL string) bool {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
@@ -61,14 +77,20 @@ func callbackEligible(rawURL string) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
-	if u.Scheme == "https" {
-		return true
+
+	host := strings.ToLower(u.Hostname())
+
+	// Loopback is allowed for local testing (HTTP or HTTPS)
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return u.Scheme == "http" || u.Scheme == "https"
 	}
-	if u.Scheme != "http" {
+
+	// External targets MUST use HTTPS and belong to verified platform domains
+	if u.Scheme != "https" {
 		return false
 	}
-	host := u.Hostname()
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+
+	return isAllowedDomain(host)
 }
 
 // kakaoCallbackAck is the CallbackResponse Kakao returns after a delivery.

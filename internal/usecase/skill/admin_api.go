@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,17 +27,20 @@ type adminResponse struct {
 
 func checkAdminAuth(r *http.Request, token string) bool {
 	if token == "" {
-		// When no token is configured, allow requests (open/dev mode)
-		return true
+		// When no token is configured, fail-closed for safety
+		return false
 	}
-	if r.Header.Get("X-Admin-Token") == token {
-		return true
+	given := r.Header.Get("X-Admin-Token")
+	if given == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			given = strings.TrimPrefix(authHeader, "Bearer ")
+		}
 	}
-	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") && strings.TrimPrefix(authHeader, "Bearer ") == token {
-		return true
+	if given == "" {
+		return false
 	}
-	return false
+	return subtle.ConstantTimeCompare([]byte(given), []byte(token)) == 1
 }
 
 func writeAdminJSON(w http.ResponseWriter, status int, resp adminResponse) {
@@ -144,10 +148,10 @@ func newAdminUploadHandler(dataDir, adminToken string, busSvc *academy.Service, 
 
 		// Prevent path traversal
 		cleanName := filepath.Base(filename)
-		if !strings.HasSuffix(strings.ToLower(cleanName), ".json") {
+		if strings.EqualFold(cleanName, "jobs.json") || strings.HasPrefix(cleanName, ".") || !strings.HasSuffix(strings.ToLower(cleanName), ".json") {
 			writeAdminJSON(w, http.StatusBadRequest, adminResponse{
 				Status: "error",
-				Error:  fmt.Sprintf("Invalid file extension for %q: must end with .json", cleanName),
+				Error:  fmt.Sprintf("Invalid or protected filename %q: must end with .json and cannot be jobs.json", cleanName),
 			})
 			return
 		}
@@ -324,6 +328,13 @@ func newAdminDeleteHandler(dataDir, adminToken string, busSvc *academy.Service, 
 		}
 
 		cleanName := filepath.Base(filename)
+		if strings.EqualFold(cleanName, "jobs.json") || strings.HasPrefix(cleanName, ".") || !strings.HasSuffix(strings.ToLower(cleanName), ".json") {
+			writeAdminJSON(w, http.StatusForbidden, adminResponse{
+				Status: "error",
+				Error:  fmt.Sprintf("Protected system file or invalid filename %q: deletion forbidden", cleanName),
+			})
+			return
+		}
 		targetPath := filepath.Join(dataDir, cleanName)
 
 		if err := os.Remove(targetPath); err != nil {
