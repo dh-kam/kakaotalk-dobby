@@ -20,3 +20,9 @@ Dockerfile
 *.md
 .vscode/
 .idea/
+
+# Audio and runtime data
+*.mp3
+*.wav
+data/schedules/jobs.json
+data/**/jobs.json

@@ -31,20 +31,21 @@ type localWhisperTranscriber struct {
 func NewLocalWhisperTranscriber(cfg LocalWhisperConfig) Transcriber {
 	bin := cfg.BinaryPath
 	if bin == "" {
-		// Auto detect binary
+		// Auto detect binary from PATH, standard system paths, or local bin
 		candidates := []string{
-			"/tmp/whisper.cpp/build/bin/whisper-cli",
-			"/tmp/whisper.cpp/bindings/go/build_go/go-whisper",
 			"whisper-cli",
 			"go-whisper",
+			"/usr/local/bin/whisper-cli",
+			"/usr/bin/whisper-cli",
+			"bin/whisper-cli",
 		}
 		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				bin = c
-				break
-			}
 			if p, err := exec.LookPath(c); err == nil {
 				bin = p
+				break
+			}
+			if _, err := os.Stat(c); err == nil {
+				bin = c
 				break
 			}
 		}
@@ -53,9 +54,13 @@ func NewLocalWhisperTranscriber(cfg LocalWhisperConfig) Transcriber {
 	model := cfg.ModelPath
 	if model == "" {
 		candidates := []string{
-			"/tmp/whisper.cpp/models/ggml-base.bin",
-			"/tmp/whisper.cpp/models/ggml-small.bin",
-			"/workspace/kakao-bot/models/ggml-base.bin",
+			"models/ggml-base.bin",
+			"models/ggml-small.bin",
+			"data/models/ggml-base.bin",
+			"/usr/local/share/whisper/ggml-base.bin",
+		}
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			candidates = append(candidates, filepath.Join(home, ".cache", "whisper", "ggml-base.bin"))
 		}
 		for _, m := range candidates {
 			if _, err := os.Stat(m); err == nil {

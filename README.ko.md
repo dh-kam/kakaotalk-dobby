@@ -25,8 +25,8 @@ Google Vertex AI (`gemini-3.8-flash`), AWS Bedrock, OpenAI, Claude, DeepSeek, Ol
 - **💬 카카오 REST API 풀 스택 SDK (`pkg/kakao`)**:
   - OAuth2 토큰 라이프사이클 관리 및 만료 시 자동 갱신(Auto-Refresh).
   - 톡메모(나에게 보내기), 친구 메시지 전송, 카카오 CDN 이미지 업로드/스크랩 관리.
-- **☸️ 원클릭 Kubernetes & Ansible 배포 자동화 (`tools/manage.sh`)**:
-  - ARM64 멀티아키텍처 도커 빌드, Oracle Cloud Registry (OCIR) 푸시, K8s Secret 동기화 및 롤아웃 재시작 자동화.
+- **🐳 Docker 빌드 및 레지스트리 관리 (`tools/manage.sh`)**:
+  - ARM64 멀티아키텍처 도커 빌드 및 Oracle Cloud Infrastructure Registry(OCIR) 푸시 자동화.
 
 ---
 
@@ -181,24 +181,25 @@ kakaobot serve --listen :8080 --secret-token my-secret
 
 ---
 
-## 🐳 Docker 및 Kubernetes 배포
+## 🐳 Docker 컨테이너 빌드 및 레지스트리 푸시
 
-`./tools/manage.sh` 스크립트를 통해 원클릭으로 빌드 및 클러스터 배포가 가능합니다:
+`./tools/manage.sh` 스크립트를 통해 ARM64 이미지를 빌드하고 레지스트리에 푸시할 수 있습니다:
 
 ```bash
 # Oracle Cloud Registry (OCIR) 로그인
 ./tools/manage.sh login
 
-# 원클릭 배포: ARM64 이미지 빌드 -> OCIR 푸시 -> Ansible을 통한 K8s Secret 동기화 & 롤아웃 재시작
-./tools/manage.sh deploy
+# ARM64 Docker 이미지 로컬 빌드
+./tools/manage.sh build
+
+# OCIR 레지스트리로 이미지 빌드 & 푸시
+./tools/manage.sh push
 ```
 
-배포 파이프라인 진행 과정:
-1. `linux/arm64` 대상 Go 정적 바이너리 빌드.
-2. 초경량 Alpine 컨테이너(Non-root 보안 계정) 패키징.
-3. `icn.ocir.io/<namespace>/kakaotalk-dobby:<tag>` 이미지 푸시.
-4. Ansible 플레이북 실행으로 K8s Secret 갱신 및 Deployment 롤아웃 재시작.
-5. 공개 HTTPS 엔드포인트 `/healthz` 상태 검증 (`200 OK`).
+빌드 및 푸시 파이프라인:
+1. `linux/arm64` 대상 Go 정적 바이너리 컴파일 (`-trimpath`, `-ldflags="-s -w"`).
+2. 초경량 Alpine 컨테이너(Non-root 보안 계정 `kakaobot`) 패키징.
+3. `icn.ocir.io/<namespace>/kakaotalk-dobby:<tag>` 이미지 태깅 및 푸시.
 
 ---
 

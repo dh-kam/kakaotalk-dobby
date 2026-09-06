@@ -38,5 +38,6 @@ data/jobs.json
 # Audio & runtime data
 *.mp3
 *.wav
-data/schedules/
+data/schedules/jobs.json
+data/**/jobs.json
 

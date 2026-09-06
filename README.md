@@ -23,8 +23,8 @@
   - OAuth2 token lifecycle management with automatic refresh.
   - Talk Memo (`/v2/api/talk/memo/*`) and Friend messaging (`/v1/api/talk/friends/*`).
   - Kakao CDN image upload, scrape, and lifecycle management.
-- **☸️ One-Click Kubernetes & Ansible Deployment (`tools/manage.sh`)**:
-  - Automated ARM64 Docker build, Oracle Cloud Infrastructure Registry (OCIR) push, K8s secret synchronization, and rollout verification.
+- **🐳 Docker Build & Registry Management (`tools/manage.sh`)**:
+  - Automated ARM64 Docker build and Oracle Cloud Infrastructure Registry (OCIR) image push.
 
 ---
 
@@ -179,24 +179,25 @@ kakaobot serve --listen :8080 --secret-token my-secret
 
 ---
 
-## 🐳 Docker & Kubernetes Deployment
+## 🐳 Docker Container Build & Registry Push
 
-Deploy to Kubernetes with a single command via `./tools/manage.sh`:
+Build and push the ARM64 container image using `./tools/manage.sh`:
 
 ```bash
 # Authenticate to Oracle Cloud Registry (OCIR)
 ./tools/manage.sh login
 
-# One-Click: Build ARM64 Docker image, push to OCIR, and deploy to K8s via Ansible
-./tools/manage.sh deploy
+# Build ARM64 Docker image locally
+./tools/manage.sh build
+
+# Build & Push image to OCIR registry
+./tools/manage.sh push
 ```
 
-The deployment automatically:
-1. Cross-compiles the Go binary for `linux/arm64`.
-2. Packages a minimal Alpine container with non-root security context.
-3. Pushes image to `icn.ocir.io/<namespace>/kakaotalk-dobby:<tag>`.
-4. Executes Ansible playbook to sync `.env` K8s secrets and perform `kubectl rollout restart`.
-5. Validates live HTTPS endpoint healthz (`200 OK`).
+Build and push pipeline:
+1. Cross-compiles Go static binary for `linux/arm64` (`-trimpath`, `-ldflags="-s -w"`).
+2. Packages minimal Alpine container with non-root security context (`kakaobot`).
+3. Tags and pushes image to `icn.ocir.io/<namespace>/kakaotalk-dobby:<tag>`.
 
 ---
 
