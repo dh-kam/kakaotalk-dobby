@@ -46,6 +46,7 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 			model = "llama3"
 		}
 		return NewOpenAIProvider(OpenAIConfig{
+			ProviderName: "ollama",
 			BaseURL:      baseURL,
 			APIKey:       cfg.APIKey,
 			DefaultModel: model,
@@ -62,6 +63,7 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 			model = "llama-3.1-8b-instant"
 		}
 		return NewOpenAIProvider(OpenAIConfig{
+			ProviderName: "groq",
 			BaseURL:      baseURL,
 			APIKey:       cfg.APIKey,
 			DefaultModel: model,
@@ -78,6 +80,26 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 			model = "deepseek-chat"
 		}
 		return NewOpenAIProvider(OpenAIConfig{
+			ProviderName: "deepseek",
+			BaseURL:      baseURL,
+			APIKey:       cfg.APIKey,
+			DefaultModel: model,
+			HTTPClient:   cfg.HTTPClient,
+		}), nil
+
+	case "grok", "xai":
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "https://api.x.ai/v1"
+		}
+		model := cfg.Model
+		if model == "" {
+			// The skill server's fallback budget (~4s under the Kakao 5s SLA)
+			// cannot absorb reasoning-model latency; grok-4.6 measured ~4.4s.
+			model = "grok-4.20-0309-non-reasoning"
+		}
+		return NewOpenAIProvider(OpenAIConfig{
+			ProviderName: "grok",
 			BaseURL:      baseURL,
 			APIKey:       cfg.APIKey,
 			DefaultModel: model,
@@ -102,7 +124,7 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 		return NewMockProvider(cfg.Model), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported AI provider: %q (supported: openai, ollama, groq, deepseek, gemini, claude, mock)", cfg.ProviderName)
+		return nil, fmt.Errorf("unsupported AI provider: %q (supported: openai, ollama, groq, deepseek, grok, gemini, claude, mock)", cfg.ProviderName)
 	}
 }
 
@@ -116,6 +138,10 @@ func NewMockProvider(model string) *MockProvider {
 		model = "mock-model"
 	}
 	return &MockProvider{model: model}
+}
+
+func (m *MockProvider) Model() string {
+	return m.model
 }
 
 func (m *MockProvider) Name() string {

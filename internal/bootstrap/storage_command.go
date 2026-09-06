@@ -76,6 +76,7 @@ func newStorageUploadCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -129,5 +130,6 @@ func newStorageDeleteCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }

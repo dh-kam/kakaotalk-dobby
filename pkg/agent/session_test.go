@@ -100,4 +100,3 @@ func TestSessionStore_CustomCompactor(t *testing.T) {
 	assert.Len(t, h, 4)
 	assert.Contains(t, h[0].Content, "🎯 사용자 맞춤형 컴팩션 완료")
 }
-

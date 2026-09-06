@@ -272,4 +272,3 @@ func formatSafeToolOutput(output string) string {
 
 	return trimmed
 }
-

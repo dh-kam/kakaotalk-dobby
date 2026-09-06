@@ -30,24 +30,51 @@ type AppConfig struct {
 	BedrockRegion      string
 	DataDir            string
 	AdminToken         string
+
+	GroqAPIKey            string
+	STTFallbackLocal       bool
+	LocalWhisperModelPath  string
+	LocalWhisperBinPath    string
+}
+
+// resolveAIKey picks the API key matching the requested provider first, so an
+// explicit AI_PROVIDER never gets another provider's key, then falls back to
+// the generic precedence chain for auto-detection.
+func resolveAIKey(explicitProvider string) string {
+	if k := os.Getenv("AI_API_KEY"); k != "" {
+		return k
+	}
+
+	var candidates []string
+	switch strings.ToLower(strings.TrimSpace(explicitProvider)) {
+	case "grok", "xai":
+		candidates = []string{"XAI_API_KEY"}
+	case "gemini", "google":
+		candidates = []string{"GEMINI_API_KEY", "VERTEX_API_KEY"}
+	case "claude", "anthropic":
+		candidates = []string{"ANTHROPIC_API_KEY"}
+	case "openai":
+		candidates = []string{"OPENAI_API_KEY"}
+	}
+	for _, name := range candidates {
+		if k := os.Getenv(name); k != "" {
+			return k
+		}
+	}
+
+	for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "VERTEX_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY"} {
+		if k := os.Getenv(name); k != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // Load loads configuration from .env file and environment variables with sensible defaults.
 func Load() *AppConfig {
 	loadDotEnv(".env")
 
-	aiKey := os.Getenv("AI_API_KEY")
-	if aiKey == "" {
-		if k := os.Getenv("OPENAI_API_KEY"); k != "" {
-			aiKey = k
-		} else if k := os.Getenv("GEMINI_API_KEY"); k != "" {
-			aiKey = k
-		} else if k := os.Getenv("VERTEX_API_KEY"); k != "" {
-			aiKey = k
-		} else if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
-			aiKey = k
-		}
-	}
+	aiKey := resolveAIKey(os.Getenv("AI_PROVIDER"))
 
 	aiProvider := os.Getenv("AI_PROVIDER")
 	if aiProvider == "" {
@@ -55,6 +82,8 @@ func Load() *AppConfig {
 			aiProvider = "gemini"
 		} else if os.Getenv("ANTHROPIC_API_KEY") != "" && os.Getenv("OPENAI_API_KEY") == "" {
 			aiProvider = "claude"
+		} else if os.Getenv("XAI_API_KEY") != "" && aiKey == os.Getenv("XAI_API_KEY") {
+			aiProvider = "grok"
 		} else if aiKey != "" {
 			aiProvider = "openai"
 		} else {
@@ -67,7 +96,7 @@ func Load() *AppConfig {
 		vertexProject = os.Getenv("GCP_PROJECT")
 	}
 	if vertexProject == "" {
-		vertexProject = "c0de1ab-dev-494714"
+		vertexProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	}
 
 	vertexLocation := os.Getenv("VERTEX_LOCATION")
@@ -83,6 +112,15 @@ func Load() *AppConfig {
 		bedrockRegion = "us-east-1"
 	}
 
+	aiModel := os.Getenv("AI_MODEL")
+	if aiModel == "" && (aiProvider == "gemini" || aiProvider == "google") {
+		aiModel = "gemini-3.8-flash"
+	}
+	vertexModel := os.Getenv("VERTEX_MODEL")
+	if vertexModel == "" {
+		vertexModel = "gemini-3.8-flash"
+	}
+
 	cfg := &AppConfig{
 		ClientID:           os.Getenv("KAKAO_REST_API_KEY"),
 		ClientSecret:       os.Getenv("KAKAO_CLIENT_SECRET"),
@@ -91,16 +129,20 @@ func Load() *AppConfig {
 		AIProvider:         aiProvider,
 		AIAPIKey:           aiKey,
 		AIBaseURL:          os.Getenv("AI_BASE_URL"),
-		AIModel:            os.Getenv("AI_MODEL"),
+		AIModel:            aiModel,
 		AISystemPrompt:     os.Getenv("AI_SYSTEM_PROMPT"),
 		VertexAPIKey:       os.Getenv("VERTEX_API_KEY"),
 		VertexProject:      vertexProject,
 		VertexLocation:     vertexLocation,
-		VertexModel:        os.Getenv("VERTEX_MODEL"),
+		VertexModel:        vertexModel,
 		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
 		BedrockRegion:      bedrockRegion,
 		DataDir:            getDataDir(),
 		AdminToken:         getAdminToken(),
+		GroqAPIKey:            os.Getenv("GROQ_API_KEY"),
+		STTFallbackLocal:       strings.EqualFold(os.Getenv("STT_ENABLE_FALLBACK"), "true") || os.Getenv("STT_ENABLE_FALLBACK") == "1",
+		LocalWhisperModelPath:  os.Getenv("WHISPER_MODEL_PATH"),
+		LocalWhisperBinPath:    os.Getenv("WHISPER_BIN_PATH"),
 	}
 
 	if cfg.RedirectURI == "" {
@@ -185,5 +227,3 @@ func getAdminToken() string {
 	}
 	return os.Getenv("ADMIN_TOKEN")
 }
-
-

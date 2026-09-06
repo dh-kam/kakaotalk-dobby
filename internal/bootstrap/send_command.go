@@ -95,6 +95,7 @@ func newSendMeCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -173,5 +174,6 @@ func newSendFriendCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }

@@ -40,6 +40,10 @@ func NewClaudeProvider(cfg ClaudeConfig) Provider {
 	}
 }
 
+func (p *claudeProvider) Model() string {
+	return p.defaultModel
+}
+
 func (p *claudeProvider) Name() string {
 	return "claude"
 }

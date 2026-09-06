@@ -214,3 +214,48 @@ func TestScheduler_PurgeCompletedJobs(t *testing.T) {
 	assert.Len(t, jobs, 1)
 	assert.Equal(t, "active_job_1", jobs[0].ID)
 }
+
+func TestScheduler_UpdateJobAppliesStatus(t *testing.T) {
+	store := NewMemoryStore()
+	engine := NewEngine(store, nil)
+	require.NoError(t, engine.Start(context.Background()))
+	defer engine.Stop()
+
+	execTime := time.Now().Add(1 * time.Hour)
+	job, err := engine.ScheduleOnce("user1", "제목", "메시지", execTime, nil)
+	require.NoError(t, err)
+
+	cancelled := JobStatusCancelled
+	updated, err := engine.UpdateJob(job.ID, JobUpdate{Status: &cancelled}, "user1")
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusCancelled, updated.Status)
+
+	stored, err := engine.GetJob(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusCancelled, stored.Status)
+}
+
+func TestScheduler_OwnerAuthorizationSemantics(t *testing.T) {
+	store := NewMemoryStore()
+	engine := NewEngine(store, nil)
+	require.NoError(t, engine.Start(context.Background()))
+	defer engine.Stop()
+
+	execTime := time.Now().Add(1 * time.Hour)
+	named, err := engine.ScheduleOnce("alice", "Alice Job", "Msg", execTime, nil)
+	require.NoError(t, err)
+	legacy, err := engine.ScheduleOnce("", "Legacy Job", "Msg", execTime, nil)
+	require.NoError(t, err)
+
+	// Populated job owner must match exactly.
+	assert.Error(t, engine.CancelJob(named.ID, "bob"))
+	require.NoError(t, engine.CancelJob(named.ID, "alice"))
+
+	// Empty job owner matches any caller (legacy/dev mode).
+	require.NoError(t, engine.CancelJob(legacy.ID, "bob"))
+
+	// Administrative call without an owner argument is unrestricted.
+	adminTarget, err := engine.ScheduleOnce("carol", "Carol Job", "Msg", execTime.Add(time.Minute), nil)
+	require.NoError(t, err)
+	require.NoError(t, engine.CancelJob(adminTarget.ID))
+}

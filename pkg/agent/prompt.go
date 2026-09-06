@@ -70,4 +70,3 @@ func BuildDomainKnowledge(busSvc *academy.Service, schoolSvc *school.Service) st
 
 	return strings.TrimSpace(sb.String())
 }
-

@@ -28,7 +28,7 @@ type GeminiConfig struct {
 func NewGeminiProvider(cfg GeminiConfig) Provider {
 	model := cfg.DefaultModel
 	if model == "" {
-		model = "gemini-1.5-flash"
+		model = "gemini-3.8-flash"
 	}
 	client := cfg.HTTPClient
 	if client == nil {
@@ -39,6 +39,10 @@ func NewGeminiProvider(cfg GeminiConfig) Provider {
 		defaultModel: model,
 		httpClient:   client,
 	}
+}
+
+func (p *geminiProvider) Model() string {
+	return p.defaultModel
 }
 
 func (p *geminiProvider) Name() string {

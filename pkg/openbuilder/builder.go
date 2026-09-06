@@ -18,6 +18,16 @@ func NewSimpleTextResponse(text string) *SkillResponse {
 	return resp
 }
 
+// NewCallbackResponse creates the immediate acknowledgment for Callback API
+// requests: Kakao shows the waiting message while the skill keeps processing
+// and later delivers the real answer to the one-time callbackUrl.
+func NewCallbackResponse(waitingMessage string) *SkillResponse {
+	resp := NewResponse()
+	resp.UseCallback = true
+	resp.Data = waitingMessage
+	return resp
+}
+
 // NewBasicCardResponse creates a basic card reply.
 func NewBasicCardResponse(title, desc, imageURL string, buttons ...CardButton) *SkillResponse {
 	resp := NewResponse()

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 type openAIProvider struct {
+	name         string
 	baseURL      string
 	apiKey       string
 	defaultModel string
@@ -19,6 +21,7 @@ type openAIProvider struct {
 
 // OpenAIConfig holds configuration for OpenAI and OpenAI-compatible providers.
 type OpenAIConfig struct {
+	ProviderName string
 	BaseURL      string
 	APIKey       string
 	DefaultModel string
@@ -35,11 +38,16 @@ func NewOpenAIProvider(cfg OpenAIConfig) Provider {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
+	name := cfg.ProviderName
+	if name == "" {
+		name = "openai"
+	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &openAIProvider{
+		name:         name,
 		baseURL:      baseURL,
 		apiKey:       cfg.APIKey,
 		defaultModel: model,
@@ -47,8 +55,12 @@ func NewOpenAIProvider(cfg OpenAIConfig) Provider {
 	}
 }
 
+func (p *openAIProvider) Model() string {
+	return p.defaultModel
+}
+
 func (p *openAIProvider) Name() string {
-	return "openai"
+	return p.name
 }
 
 type openAIChatRequest struct {
@@ -71,10 +83,33 @@ type openAIChatResponse struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
-	Error *struct {
+	Error json.RawMessage `json:"error,omitempty"`
+}
+
+// describeProviderError renders OpenAI-compatible error payloads, which appear
+// either as an object ({"error":{"message":...}}) or a bare string (xAI).
+func describeProviderError(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+
+	var structured struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
-	} `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &structured); err == nil && structured.Message != "" {
+		if structured.Type != "" {
+			return fmt.Sprintf("%s (%s)", structured.Message, structured.Type)
+		}
+		return structured.Message
+	}
+
+	var bare string
+	if err := json.Unmarshal(raw, &bare); err == nil {
+		return bare
+	}
+	return trimmed
 }
 
 func (p *openAIProvider) GenerateResponse(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
@@ -131,8 +166,8 @@ func (p *openAIProvider) GenerateResponse(ctx context.Context, req CompletionReq
 		return nil, fmt.Errorf("unmarshal openai response: %w", err)
 	}
 
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("openai error: %s", chatResp.Error.Message)
+	if msg := describeProviderError(chatResp.Error); msg != "" {
+		return nil, fmt.Errorf("%s error: %s", p.name, msg)
 	}
 
 	if resp.StatusCode != http.StatusOK {

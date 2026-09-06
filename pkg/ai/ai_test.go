@@ -73,7 +73,7 @@ func TestGeminiProvider_GenerateResponse(t *testing.T) {
 
 	provider := &geminiProvider{
 		apiKey:       "test-key",
-		defaultModel: "gemini-1.5-flash",
+		defaultModel: "gemini-3.8-flash",
 		httpClient:   ts.Client(),
 	}
 
@@ -107,5 +107,74 @@ func TestNewProvider_Factory(t *testing.T) {
 		BaseURL:      "http://localhost:11434/v1",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "openai", ollama.Name())
+	assert.Equal(t, "ollama", ollama.Name())
+
+	// Grok reuses the OpenAI-compatible client against api.x.ai
+	grok, err := NewProvider(ProviderConfig{
+		ProviderName: "grok",
+		APIKey:       "test-key",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "grok", grok.Name())
+	grokImpl, ok := grok.(*openAIProvider)
+	require.True(t, ok)
+	assert.Equal(t, "grok-4.20-0309-non-reasoning", grokImpl.defaultModel)
+	assert.Equal(t, "https://api.x.ai/v1", grokImpl.baseURL)
+
+	xai, err := NewProvider(ProviderConfig{
+		ProviderName: "xai",
+		APIKey:       "test-key",
+		Model:        "grok-4.20-0309-non-reasoning",
+	})
+	require.NoError(t, err)
+	xaiImpl, ok := xai.(*openAIProvider)
+	require.True(t, ok)
+	assert.Equal(t, "grok-4.20-0309-non-reasoning", xaiImpl.defaultModel)
+}
+
+func TestOpenAIProvider_ErrorShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  string
+		body      string
+		wantInErr []string
+	}{
+		{
+			name:      "object error shape",
+			provider:  "openai",
+			body:      `{"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}`,
+			wantInErr: []string{"Rate limit exceeded", "rate_limit_error"},
+		},
+		{
+			name:      "bare string error shape (xAI)",
+			provider:  "grok",
+			body:      `{"error": "Incorrect API key provided"}`,
+			wantInErr: []string{"Incorrect API key provided"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer ts.Close()
+
+			provider := NewOpenAIProvider(OpenAIConfig{
+				ProviderName: tt.provider,
+				BaseURL:      ts.URL,
+				APIKey:       "bad-key",
+			})
+
+			_, err := provider.GenerateResponse(context.Background(), CompletionRequest{
+				Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+			})
+			require.Error(t, err)
+			for _, want := range tt.wantInErr {
+				assert.Contains(t, err.Error(), want)
+			}
+			assert.Contains(t, err.Error(), tt.provider, "error should name the provider")
+		})
+	}
 }

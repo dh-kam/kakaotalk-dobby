@@ -5,7 +5,7 @@
 
 **카카오톡 도비(KakaoTalk Dobby)**는 **카카오 i 오픈빌더(Kakao i OpenBuilder)** 스킬 서버, **ReAct 기반 자율 AI 에이전트(Autonomous AI Agent)**, 그리고 **Cron & 타이머 스케줄러 엔진**이 통합된 프로덕션급 Go 언어 챗봇 백엔드입니다.
 
-Google Vertex AI (`gemini-3.7-flash`), AWS Bedrock, OpenAI, Claude, DeepSeek, Ollama 등 다양한 LLM을 지원하며, 카카오톡 REST API를 통한 메시지 발송과 능동적인 푸시 알림을 제공합니다.
+Google Vertex AI (`gemini-3.8-flash`), AWS Bedrock, OpenAI, Claude, DeepSeek, Ollama 등 다양한 LLM을 지원하며, 카카오톡 REST API를 통한 메시지 발송과 능동적인 푸시 알림을 제공합니다.
 
 ---
 
@@ -13,7 +13,7 @@ Google Vertex AI (`gemini-3.7-flash`), AWS Bedrock, OpenAI, Claude, DeepSeek, Ol
 
 - **⚡ 초고속 Fast-Path & 자율 ReAct AI 에이전트 하이브리드 구조**:
   - **Fast-Path 라우팅**: 카카오 오픈빌더의 **5.0초 하드 타임아웃**을 방어하기 위해 버스 시간표 조회, 알림 관리, 상태 확인 등 정형 질의를 **120ms 미만**으로 즉시 응답.
-  - **ReAct AI Agent**: Google Vertex AI (`gemini-3.7-flash`) 기반 다중 턴 추론 및 5종의 도구 자율 실행 (Function Calling).
+  - **ReAct AI Agent**: Google Vertex AI (`gemini-3.8-flash`) 기반 다중 턴 추론 및 5종의 도구 자율 실행 (Function Calling).
 - **⏰ 정밀 Cron & 푸시 알림 스케줄러 (`pkg/scheduler`)**:
   - 단발성 타이머(`once`: 예: *10분 뒤*, *내일 08:30*) 및 주기적 Cron 스케줄(`recurring`: 예: *매주 평일 15:00*) 완벽 지원.
   - **`Asia/Seoul` (KST)** 표준시 기준 동작 및 **원자적 파일 영속성 (`FileStore`)**을 통한 서버/파드 재부팅 시 스케줄 자동 복원.

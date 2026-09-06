@@ -286,6 +286,21 @@ func (e *Engine) executeJob(jobID string) {
 	_ = e.store.Save(job)
 }
 
+// authorizeOwner enforces per-user isolation on job mutations.
+// With no ownerUserID argument the call is administrative and unrestricted.
+// With one, an empty job UserID matches any owner, while a populated job UserID
+// must equal the caller exactly (case-insensitive).
+func authorizeOwner(job *Job, id string, ownerUserID []string) error {
+	if len(ownerUserID) == 0 {
+		return nil
+	}
+	requiredUser := strings.TrimSpace(ownerUserID[0])
+	if job.UserID == "" || strings.EqualFold(job.UserID, requiredUser) {
+		return nil
+	}
+	return fmt.Errorf("permission denied: job %s belongs to another user", id)
+}
+
 // CancelJob cancels a scheduled job. If ownerUserID is provided, it verifies ownership.
 func (e *Engine) CancelJob(id string, ownerUserID ...string) error {
 	e.mu.Lock()
@@ -296,10 +311,8 @@ func (e *Engine) CancelJob(id string, ownerUserID ...string) error {
 		return err
 	}
 
-	if len(ownerUserID) > 0 && ownerUserID[0] != "" {
-		if job.UserID != "" && !strings.EqualFold(job.UserID, ownerUserID[0]) {
-			return fmt.Errorf("permission denied: job %s belongs to another user", id)
-		}
+	if err := authorizeOwner(job, id, ownerUserID); err != nil {
+		return err
 	}
 
 	job.Status = JobStatusCancelled
@@ -328,10 +341,8 @@ func (e *Engine) UpdateJob(id string, update JobUpdate, ownerUserID ...string) (
 		return nil, err
 	}
 
-	if len(ownerUserID) > 0 && ownerUserID[0] != "" {
-		if job.UserID != "" && !strings.EqualFold(job.UserID, ownerUserID[0]) {
-			return nil, fmt.Errorf("permission denied: job %s belongs to another user", id)
-		}
+	if err := authorizeOwner(job, id, ownerUserID); err != nil {
+		return nil, err
 	}
 
 	// Stop and remove existing schedule triggers
@@ -359,13 +370,14 @@ func (e *Engine) UpdateJob(id string, update JobUpdate, ownerUserID ...string) (
 	if update.CronExpr != nil {
 		job.CronExpr = *update.CronExpr
 		job.Type = ScheduleTypeRecurring
+		job.ExecuteAt = time.Time{}
 	}
 	if update.Status != nil {
 		job.Status = *update.Status
 	}
 
-	// Re-arm schedule if active
-	if job.Status == JobStatusActive && e.running {
+	// Re-arm schedule trigger if job is active
+	if job.Status == JobStatusActive {
 		if job.Type == ScheduleTypeOnce {
 			if job.ExecuteAt.After(time.Now().In(e.loc)) {
 				e.scheduleTimerLocked(job)
@@ -395,10 +407,8 @@ func (e *Engine) DeleteJob(id string, ownerUserID ...string) error {
 		return err
 	}
 
-	if len(ownerUserID) > 0 && ownerUserID[0] != "" {
-		if job.UserID != "" && !strings.EqualFold(job.UserID, ownerUserID[0]) {
-			return fmt.Errorf("permission denied: job %s belongs to another user", id)
-		}
+	if err := authorizeOwner(job, id, ownerUserID); err != nil {
+		return err
 	}
 
 	if timer, ok := e.timerMap[id]; ok {
@@ -420,7 +430,8 @@ func (e *Engine) ListJobs(userID string) []*Job {
 		return nil
 	}
 
-	if userID == "" || userID == "*" {
+	cleanUser := strings.TrimSpace(userID)
+	if cleanUser == "" || cleanUser == "*" {
 		list := make([]*Job, 0, len(jobs))
 		for _, j := range jobs {
 			list = append(list, j.Clone())
@@ -430,7 +441,7 @@ func (e *Engine) ListJobs(userID string) []*Job {
 
 	filtered := make([]*Job, 0)
 	for _, j := range jobs {
-		if strings.EqualFold(j.UserID, userID) {
+		if strings.EqualFold(j.UserID, cleanUser) {
 			filtered = append(filtered, j.Clone())
 		}
 	}

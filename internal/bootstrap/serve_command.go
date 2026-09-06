@@ -55,5 +55,6 @@ func newServeCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }

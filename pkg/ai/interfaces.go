@@ -5,6 +5,8 @@ import "context"
 // Provider defines the interface for interacting with LLMs.
 type Provider interface {
 	Name() string
+	// Model returns the resolved default model identifier for this provider.
+	Model() string
 	GenerateResponse(ctx context.Context, req CompletionRequest) (*CompletionResponse, error)
 }
 

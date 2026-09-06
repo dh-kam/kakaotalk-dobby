@@ -58,4 +58,3 @@ func TestSkillResponse_ValidateAndNormalize(t *testing.T) {
 		assert.LessOrEqual(t, len([]rune(qr.Label)), 14)
 	}
 }
-

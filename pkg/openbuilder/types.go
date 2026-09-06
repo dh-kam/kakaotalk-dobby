@@ -10,12 +10,13 @@ type SkillPayload struct {
 
 // UserRequest contains user-specific request details and user message.
 type UserRequest struct {
-	Timezone  string                 `json:"timezone"`
-	Params    map[string]interface{} `json:"params,omitempty"`
-	Block     Block                  `json:"block"`
-	Utterance string                 `json:"utterance"`
-	Lang      string                 `json:"lang,omitempty"`
-	User      ChatUser               `json:"user"`
+	Timezone    string                 `json:"timezone"`
+	Params      map[string]interface{} `json:"params,omitempty"`
+	Block       Block                  `json:"block"`
+	Utterance   string                 `json:"utterance"`
+	Lang        string                 `json:"lang,omitempty"`
+	User        ChatUser               `json:"user"`
+	CallbackURL string                 `json:"callbackUrl,omitempty"`
 }
 
 // Block represents the matched scenario block in OpenBuilder.

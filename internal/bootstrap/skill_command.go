@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/internal/config"
 	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/skill"
@@ -36,15 +37,18 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 	cfg := config.Load()
 
 	opts := struct {
-		ListenAddr     string `flag:"listen" usage:"Address to listen on for Kakao OpenBuilder skill requests"`
-		ChannelID      string `flag:"channel-id" usage:"KakaoTalk channel search ID"`
-		DataDir        string `flag:"data-dir" usage:"Directory containing schedule and timetable JSON data files"`
-		AdminToken     string `flag:"admin-token" usage:"Administrative API bearer token for uploading and reloading data"`
-		AIProvider     string `flag:"ai-provider" usage:"AI LLM provider (openai, gemini, claude, ollama, groq, deepseek, mock)"`
-		AIAPIKey       string `flag:"ai-api-key" usage:"AI Provider API key"`
-		AIBaseURL      string `flag:"ai-base-url" usage:"Custom AI base URL (e.g. for Ollama http://localhost:11434/v1)"`
-		AIModel        string `flag:"ai-model" usage:"AI Model name"`
-		AISystemPrompt string `flag:"ai-system-prompt" usage:"AI System Instruction prompt"`
+		ListenAddr             string        `flag:"listen" usage:"Address to listen on for Kakao OpenBuilder skill requests"`
+		ChannelID              string        `flag:"channel-id" usage:"KakaoTalk channel search ID"`
+		DataDir                string        `flag:"data-dir" usage:"Directory containing schedule and timetable JSON data files"`
+		AdminToken             string        `flag:"admin-token" usage:"Administrative API bearer token for uploading and reloading data"`
+		AIProvider             string        `flag:"ai-provider" usage:"AI LLM provider (openai, gemini, claude, ollama, grok, deepseek, grok, mock)"`
+		AIAPIKey               string        `flag:"ai-api-key" usage:"AI Provider API key"`
+		AIBaseURL              string        `flag:"ai-base-url" usage:"Custom AI base URL (e.g. for Ollama http://localhost:11434/v1)"`
+		AIModel                string        `flag:"ai-model" usage:"AI Model name"`
+		AISystemPrompt         string        `flag:"ai-system-prompt" usage:"AI System Instruction prompt"`
+		CallbackEnabled        bool          `flag:"callback-enabled" usage:"Answer via Kakao Callback API when the payload carries a callbackUrl"`
+		CallbackWaitingMessage string        `flag:"callback-waiting-message" usage:"Immediate ack message shown while the callback answer is pending"`
+		CallbackTimeout        time.Duration `flag:"callback-timeout" usage:"Budget for generating the callback answer before delivering it"`
 	}{}
 
 	binder := flagsbinder.NewViperCobraFlagsBinder().
@@ -52,11 +56,14 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 		String("channel-id", "0xc0de1ab", "KakaoTalk channel search ID").
 		String("data-dir", cfg.DataDir, "Directory containing schedule and timetable JSON data files").
 		String("admin-token", cfg.AdminToken, "Administrative API bearer token for uploading and reloading data").
-		String("ai-provider", cfg.AIProvider, "AI LLM provider (openai, gemini, claude, ollama, groq, deepseek, mock)").
+		String("ai-provider", cfg.AIProvider, "AI LLM provider (openai, gemini, claude, ollama, grok, deepseek, grok, mock)").
 		String("ai-api-key", cfg.AIAPIKey, "AI Provider API key").
 		String("ai-base-url", cfg.AIBaseURL, "Custom AI base URL").
 		String("ai-model", cfg.AIModel, "AI Model name").
-		String("ai-system-prompt", cfg.AISystemPrompt, "AI System Instruction prompt")
+		String("ai-system-prompt", cfg.AISystemPrompt, "AI System Instruction prompt").
+		Bool("callback-enabled", true, "Answer via Kakao Callback API when the payload carries a callbackUrl").
+		String("callback-waiting-message", skill.DefaultCallbackWaitingMessage, "Immediate ack message shown while the callback answer is pending").
+		Duration("callback-timeout", "", 50*time.Second, "Budget for generating the callback answer before delivering it")
 
 	cmd := &cobra.Command{
 		Use:           "serve",
@@ -124,40 +131,35 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			}
 			defer schedEngine.Stop()
 
-			// Initialize Agent if Vertex AI or Bedrock is configured
+			// Initialize Agent if Vertex AI is configured (Bedrock remains available via the `agent` command)
 			var botAgent agent.Agent
 			if runtimeCfg.VertexAPIKey != "" {
-				vModel := runtimeCfg.VertexModel
-				if vModel == "" {
-					vModel = "gemini-2.5-flash"
-				}
-				vProvider, err := agent.NewLLMProvider(agent.ProviderOptions{
-					ProviderName: "vertex",
-					Model:        vModel,
-					Project:      runtimeCfg.VertexProject,
-					Location:     runtimeCfg.VertexLocation,
-					APIKey:       runtimeCfg.VertexAPIKey,
+				dynamicProv := agent.NewDynamicLLMProvider(agent.DynamicProviderConfig{
+					VertexCfg: agent.VertexConfig{
+						Project:  runtimeCfg.VertexProject,
+						Location: runtimeCfg.VertexLocation,
+						APIKey:   runtimeCfg.VertexAPIKey,
+					},
+					PrefStore: agent.GetDefaultModelPreferenceStore(),
 				})
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "⚠️ Failed to init Vertex provider: %v\n", err)
-				} else {
-					registry := agent.NewToolRegistry()
-					registry.Register(&agent.CurrentTimeTool{})
-					registry.Register(&agent.KoreanHolidayTool{})
-					registry.Register(&agent.ServerStatusTool{})
-					registry.Register(agent.NewBusScheduleTool(busSvc))
-					if schoolSvc != nil {
-						registry.Register(agent.NewSchoolTimetableTool(schoolSvc))
-					}
-					registry.Register(agent.NewScheduleNotificationTool(schedEngine))
-					registry.Register(agent.NewListSchedulesTool(schedEngine))
-					registry.Register(agent.NewUpdateScheduleTool(schedEngine))
-					registry.Register(agent.NewCancelScheduleTool(schedEngine))
-					registry.Register(agent.NewDeleteScheduleTool(schedEngine))
 
-					botAgent = agent.NewAgent(agent.AgentConfig{
-						Provider: vProvider,
-						Tools:    registry,
+				registry := agent.NewToolRegistry()
+				registry.Register(&agent.CurrentTimeTool{})
+				registry.Register(&agent.KoreanHolidayTool{})
+				registry.Register(&agent.ServerStatusTool{})
+				registry.Register(agent.NewBusScheduleTool(busSvc))
+				if schoolSvc != nil {
+					registry.Register(agent.NewSchoolTimetableTool(schoolSvc))
+				}
+				registry.Register(agent.NewScheduleNotificationTool(schedEngine))
+				registry.Register(agent.NewListSchedulesTool(schedEngine))
+				registry.Register(agent.NewUpdateScheduleTool(schedEngine))
+				registry.Register(agent.NewCancelScheduleTool(schedEngine))
+				registry.Register(agent.NewDeleteScheduleTool(schedEngine))
+
+				botAgent = agent.NewAgent(agent.AgentConfig{
+					Provider: dynamicProv,
+					Tools:    registry,
 						PromptFunc: func() string {
 							domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
 							return fmt.Sprintf(`You are a helpful, polite KakaoTalk AI assistant for channel @%s.
@@ -167,27 +169,30 @@ Always answer politely, naturally, and concisely in Korean formatted for mobile 
 %s`, opts.ChannelID, domainKnowledge)
 						},
 						MaxIterations: 3,
-					})
-				}
+				})
 			}
 
 			return skill.NewSkillServeUseCase().Execute(cmd.Context(), skill.SkillServeRequest{
-				ListenAddr:    opts.ListenAddr,
-				ChannelID:     opts.ChannelID,
-				AIProvider:    aiProvider,
-				Agent:         botAgent,
-				BusService:    busSvc,
-				SchoolService: schoolSvc,
-				Scheduler:     schedEngine,
-				SessionStore:  agent.NewMemorySessionStore(50),
-				SystemPrompt:  opts.AISystemPrompt,
-				DataDir:       opts.DataDir,
-				AdminToken:    opts.AdminToken,
-				Out:           cmd.OutOrStdout(),
+				ListenAddr:             opts.ListenAddr,
+				ChannelID:              opts.ChannelID,
+				AIProvider:             aiProvider,
+				Agent:                  botAgent,
+				BusService:             busSvc,
+				SchoolService:          schoolSvc,
+				Scheduler:              schedEngine,
+				SessionStore:           agent.NewMemorySessionStore(50),
+				SystemPrompt:           opts.AISystemPrompt,
+				DataDir:                opts.DataDir,
+				AdminToken:             opts.AdminToken,
+				CallbackEnabled:        opts.CallbackEnabled,
+				CallbackWaitingMessage: opts.CallbackWaitingMessage,
+				CallbackProcessingTime: opts.CallbackTimeout,
+				Out:                    cmd.OutOrStdout(),
 			})
 		},
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "admin-token", "ai-api-key")
 	return cmd
 }

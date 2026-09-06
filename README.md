@@ -11,7 +11,7 @@
 
 - **⚡ Sub-120ms Fast-Path & Autonomous AI Agent**:
   - **Fast-Path Routing**: Instantly resolves bus schedule lookups, schedule management, and health checks in < 120ms to safely bypass Kakao OpenBuilder's 5.0-second hard cutoff.
-  - **ReAct AI Agent**: Powered by Google Vertex AI (`gemini-3.7-flash`) and AWS Bedrock with autonomous multi-turn reasoning and tool calling.
+  - **ReAct AI Agent**: Powered by Google Vertex AI (`gemini-3.8-flash`) and AWS Bedrock with autonomous multi-turn reasoning and tool calling.
 - **⏰ Precision Cron & Reminder Scheduler (`pkg/scheduler`)**:
   - Full **CRUD** support for one-shot timers (`once`) and recurring cron jobs (`recurring`).
   - Native **`Asia/Seoul` (KST)** timezone support with atomic JSON file persistence (`FileStore`) across pod restarts.

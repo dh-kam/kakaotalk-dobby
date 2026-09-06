@@ -84,6 +84,7 @@ func newAuthLoginCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -125,6 +126,7 @@ func newAuthCheckCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -168,6 +170,7 @@ func newAuthStatusCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -212,6 +215,7 @@ func newAuthRefreshCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -259,6 +263,7 @@ func newAuthLogoutCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }
 
@@ -306,5 +311,6 @@ func newAuthUnlinkCommand(ctx context.Context) *cobra.Command {
 	}
 
 	binder.SetTo(cmd.Flags())
+	maskFlagDefaults(cmd, "client-secret")
 	return cmd
 }

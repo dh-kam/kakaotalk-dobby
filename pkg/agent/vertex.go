@@ -40,17 +40,11 @@ type VertexConfig struct {
 // NewVertexProvider creates a new Google Vertex AI Provider using official google.golang.org/genai SDK.
 func NewVertexProvider(cfg VertexConfig) LLMProvider {
 	project := cfg.Project
-	if project == "" {
-		project = "c0de1ab-dev-494714"
-	}
 	loc := cfg.Location
 	if loc == "" || loc == "global" {
 		loc = "us-central1"
 	}
-	model := cfg.Model
-	if model == "" {
-		model = "gemini-3.7-flash"
-	}
+	model := ResolveLatestGeminiFlashModel(context.Background(), cfg)
 
 	return &vertexSDKProvider{
 		project:       project,
@@ -94,9 +88,6 @@ func (p *vertexSDKProvider) getClient(ctx context.Context) (*genai.Client, error
 	}
 
 	backend := genai.BackendVertexAI
-	if p.project == "" {
-		backend = genai.BackendGeminiAPI
-	}
 
 	httpClient := p.httpClient
 	if p.bearerToken != "" {

@@ -84,23 +84,27 @@ func NewService() *Service {
 	}
 }
 
-// LoadFromDir loads all schedule JSON files from a directory without duplicates.
-func (s *Service) LoadFromDir(dirPath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// scheduleKey identifies a route across loads: academy + vehicle + trip type.
+func scheduleKey(sched *BusSchedule) string {
+	return fmt.Sprintf("%s|%s|%s", sched.Academy.Name, sched.Academy.VehicleNumber, sched.Academy.Type)
+}
 
+// scanSchedulesDir reads every valid schedule JSON in dirPath, skipping
+// unparseable files and duplicates within the directory.
+func scanSchedulesDir(dirPath string) ([]*BusSchedule, map[string]bool, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		return fmt.Errorf("read schedules dir: %w", err)
+		return nil, nil, fmt.Errorf("read schedules dir: %w", err)
 	}
 
+	seen := make(map[string]bool)
+	var schedules []*BusSchedule
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 
-		filePath := filepath.Join(dirPath, entry.Name())
-		data, err := os.ReadFile(filePath)
+		data, err := os.ReadFile(filepath.Join(dirPath, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -110,37 +114,95 @@ func (s *Service) LoadFromDir(dirPath string) error {
 			continue
 		}
 
-		key := fmt.Sprintf("%s|%s|%s", sched.Academy.Name, sched.Academy.VehicleNumber, sched.Academy.Type)
+		if strings.TrimSpace(sched.Academy.Name) == "" {
+			continue
+		}
+
+		key := scheduleKey(&sched)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		schedules = append(schedules, &sched)
+	}
+	return schedules, seen, nil
+}
+
+// LoadFromDir loads all schedule JSON files from a directory without duplicates.
+func (s *Service) LoadFromDir(dirPath string) error {
+	schedules, _, err := scanSchedulesDir(dirPath)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sched := range schedules {
+		key := scheduleKey(sched)
 		if s.seen[key] {
 			continue
 		}
 		s.seen[key] = true
-		s.schedules = append(s.schedules, &sched)
+		s.schedules = append(s.schedules, sched)
 	}
-
 	return nil
 }
 
-// ReloadFromDir clears in-memory schedules and reloads all schedule JSON files from the directory.
+// ReloadFromDir reads schedule files from disk and atomically swaps in-memory state.
 func (s *Service) ReloadFromDir(dirPath string) error {
+	schedules, seen, err := scanSchedulesDir(dirPath)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
-	s.schedules = make([]*BusSchedule, 0)
-	s.seen = make(map[string]bool)
+	s.schedules = schedules
+	s.seen = seen
 	s.mu.Unlock()
 
-	return s.LoadFromDir(dirPath)
+	return nil
 }
 
 // AddSchedule adds an in-memory schedule without duplicates.
 func (s *Service) AddSchedule(sched *BusSchedule) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := fmt.Sprintf("%s|%s|%s", sched.Academy.Name, sched.Academy.VehicleNumber, sched.Academy.Type)
+	key := scheduleKey(sched)
 	if s.seen[key] {
 		return
 	}
 	s.seen[key] = true
 	s.schedules = append(s.schedules, sched)
+}
+
+// stopDisplayTimes renders a stop's times keyed by display class name.
+// Raw class-ID keyed schedules are used only when no display schedules exist,
+// so internal IDs never surface alongside display names.
+func stopDisplayTimes(stop StopInfo, classes []ClassInfo) map[string]string {
+	times := make(map[string]string)
+	if len(classes) > 0 {
+		for _, cls := range classes {
+			val, ok := stop.DisplaySchedules[cls.ClassName]
+			if !ok || val == "" {
+				val = stop.Schedules[cls.ClassID]
+			}
+			if val != "" {
+				times[cls.ClassName] = val
+			}
+		}
+		return times
+	}
+
+	source := stop.DisplaySchedules
+	if len(source) == 0 {
+		source = stop.Schedules
+	}
+	for k, v := range source {
+		if v != "" {
+			times[k] = v
+		}
+	}
+	return times
 }
 
 // Search searches schedules matching the query with deduplicated results.
@@ -178,17 +240,7 @@ func (s *Service) Search(q SearchQuery) []MatchResult {
 			}
 			seenStops[stopKey] = true
 
-			// Format display times
-			times := make(map[string]string)
-			for _, cls := range sched.Classes {
-				val, ok := stop.DisplaySchedules[cls.ClassName]
-				if !ok || val == "" {
-					val = stop.Schedules[cls.ClassID]
-				}
-				if val != "" {
-					times[cls.ClassName] = val
-				}
-			}
+			times := stopDisplayTimes(stop, sched.Classes)
 
 			results = append(results, MatchResult{
 				AcademyName:    sched.Academy.Name,
@@ -302,4 +354,3 @@ func (s *Service) MatchAcademyFromText(text string) string {
 	}
 	return ""
 }
-

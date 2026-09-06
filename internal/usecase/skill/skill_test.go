@@ -160,4 +160,3 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, busSkillResp.Template.Outputs)
 }
-

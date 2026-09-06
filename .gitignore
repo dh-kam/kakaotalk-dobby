@@ -34,3 +34,9 @@ data/jobs.json
 .vscode/
 .idea/
 *.swp
+
+# Audio & runtime data
+*.mp3
+*.wav
+data/schedules/
+

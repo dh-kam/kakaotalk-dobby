@@ -3,13 +3,16 @@ package school
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/pkg/holidays"
+	"github.com/samber/lo"
 )
 
 // PeriodInfo describes time boundaries for a period.
@@ -107,28 +110,29 @@ func NewServiceFromFile(filePath string) (*Service, error) {
 
 	svc := NewService()
 	svc.timetable = &tt
-	key := fmt.Sprintf("%d-%d", tt.Grade, tt.ClassNumber)
-	svc.timetables[key] = &tt
+	svc.timetables[timetableKey(&tt)] = &tt
 	return svc, nil
 }
 
-// LoadFromDir scans a directory and loads all school timetable JSON files.
-func (s *Service) LoadFromDir(dirPath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// timetableKey identifies a timetable by grade and class number.
+func timetableKey(tt *Timetable) string {
+	return fmt.Sprintf("%d-%d", tt.Grade, tt.ClassNumber)
+}
 
+// scanTimetablesDir reads every valid timetable JSON in dirPath keyed by grade-class.
+func scanTimetablesDir(dirPath string) (map[string]*Timetable, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		return fmt.Errorf("read school timetable dir: %w", err)
+		return nil, fmt.Errorf("read school timetables dir: %w", err)
 	}
 
+	timetables := make(map[string]*Timetable)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 
-		filePath := filepath.Join(dirPath, entry.Name())
-		data, err := os.ReadFile(filePath)
+		data, err := os.ReadFile(filepath.Join(dirPath, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -140,28 +144,60 @@ func (s *Service) LoadFromDir(dirPath string) error {
 
 		// Valid school timetable must have grade, class, and weekly timetable
 		if tt.Grade > 0 && tt.ClassNumber > 0 && len(tt.WeeklyTimetable) > 0 {
-			key := fmt.Sprintf("%d-%d", tt.Grade, tt.ClassNumber)
-			if s.timetables == nil {
-				s.timetables = make(map[string]*Timetable)
-			}
-			s.timetables[key] = &tt
-			if s.timetable == nil {
-				s.timetable = &tt
-			}
+			timetables[timetableKey(&tt)] = &tt
 		}
 	}
+	return timetables, nil
+}
 
+// firstTimetable picks the lexicographically first entry for deterministic selection.
+func firstTimetable(timetables map[string]*Timetable) *Timetable {
+	keys := lo.Keys(timetables)
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	return timetables[keys[0]]
+}
+
+// LoadFromDir scans a directory and loads all school timetable JSON files.
+func (s *Service) LoadFromDir(dirPath string) error {
+	timetables, err := scanTimetablesDir(dirPath)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.timetables == nil {
+		s.timetables = make(map[string]*Timetable)
+	}
+	maps.Copy(s.timetables, timetables)
+	if s.timetable == nil {
+		s.timetable = firstTimetable(s.timetables)
+	}
 	return nil
 }
 
-// ReloadFromDir clears current timetables and reloads all school timetable JSON files from the directory.
+// ReloadFromDir reads timetable files from disk and atomically swaps in-memory state.
+// The current primary is preserved when still present, otherwise selection is deterministic.
 func (s *Service) ReloadFromDir(dirPath string) error {
-	s.mu.Lock()
-	s.timetable = nil
-	s.timetables = make(map[string]*Timetable)
-	s.mu.Unlock()
+	timetables, err := scanTimetablesDir(dirPath)
+	if err != nil {
+		return err
+	}
 
-	return s.LoadFromDir(dirPath)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.timetable == nil {
+		s.timetable = firstTimetable(timetables)
+	} else if _, ok := timetables[timetableKey(s.timetable)]; !ok {
+		s.timetable = firstTimetable(timetables)
+	}
+	s.timetables = timetables
+	return nil
 }
 
 // GetSummary returns a human-readable list of registered school classes.
@@ -199,36 +235,12 @@ func (s *Service) GetScheduleForDay(dayQuery string) (*DaySchedule, string, erro
 		return nil, "", fmt.Errorf("timetable data is not loaded")
 	}
 
-	clean := strings.TrimSpace(strings.ToLower(dayQuery))
 	now := time.Now().In(holidays.GetKSTLocation())
-
-	var key string
-	switch {
-	case clean == "" || clean == "오늘" || clean == "today":
-		key = weekdayToKey(now.Weekday())
-	case clean == "내일" || clean == "tomorrow":
-		key = weekdayToKey(now.AddDate(0, 0, 1).Weekday())
-	case clean == "모레":
-		key = weekdayToKey(now.AddDate(0, 0, 2).Weekday())
-	case clean == "어제":
-		key = weekdayToKey(now.AddDate(0, 0, -1).Weekday())
-	case strings.Contains(clean, "월"):
-		key = "monday"
-	case strings.Contains(clean, "화"):
-		key = "tuesday"
-	case strings.Contains(clean, "수"):
-		key = "wednesday"
-	case strings.Contains(clean, "목"):
-		key = "thursday"
-	case strings.Contains(clean, "금"):
-		key = "friday"
-	case strings.Contains(clean, "토") || strings.Contains(clean, "일"):
-		return nil, "", fmt.Errorf("주말(토/일)에는 학교 수업이 없습니다")
-	default:
-		key = "monday"
+	key, err := dayQueryToKey(strings.TrimSpace(strings.ToLower(dayQuery)), now)
+	if err != nil {
+		return nil, "", err
 	}
-
-	if key == "" || key == "weekend" {
+	if key == "weekend" {
 		return nil, "", fmt.Errorf("주말(토/일)에는 학교 수업이 없습니다")
 	}
 
@@ -238,6 +250,71 @@ func (s *Service) GetScheduleForDay(dayQuery string) (*DaySchedule, string, erro
 	}
 
 	return &daySched, key, nil
+}
+
+type relativeDayWord struct {
+	word   string
+	offset int
+}
+
+type weekdayWord struct {
+	word string
+	key  string
+}
+
+// dayQueryToKey resolves a Korean or English day query to a weekly timetable
+// key. Unrecognized queries return an error instead of silently defaulting to
+// a weekday; single Korean characters match only on exact equality so free
+// text such as "지금" never resolves to 금요일.
+func dayQueryToKey(clean string, now time.Time) (string, error) {
+	if clean == "" {
+		return weekdayToKey(now.Weekday()), nil
+	}
+
+	weekdays := []weekdayWord{
+		{"월요일", "monday"}, {"monday", "monday"},
+		{"화요일", "tuesday"}, {"tuesday", "tuesday"},
+		{"수요일", "wednesday"}, {"wednesday", "wednesday"},
+		{"목요일", "thursday"}, {"thursday", "thursday"},
+		{"금요일", "friday"}, {"friday", "friday"},
+	}
+
+	if matched, found := lo.Find([]relativeDayWord{
+		{"오늘", 0}, {"today", 0},
+		{"내일", 1}, {"tomorrow", 1},
+		{"모레", 2},
+		{"어제", -1},
+	}, func(d relativeDayWord) bool {
+		return strings.Contains(clean, d.word)
+	}); found {
+		return weekdayToKey(now.AddDate(0, 0, matched.offset).Weekday()), nil
+	}
+
+	if matched, found := lo.Find(weekdays, func(w weekdayWord) bool {
+		return strings.Contains(clean, w.word)
+	}); found {
+		return matched.key, nil
+	}
+
+	switch clean {
+	case "월":
+		return "monday", nil
+	case "화":
+		return "tuesday", nil
+	case "수":
+		return "wednesday", nil
+	case "목":
+		return "thursday", nil
+	case "금":
+		return "friday", nil
+	case "토", "일", "토요일", "일요일", "주말", "weekend":
+		return "", fmt.Errorf("주말(토/일)에는 학교 수업이 없습니다")
+	}
+
+	if strings.Contains(clean, "토요일") || strings.Contains(clean, "일요일") || strings.Contains(clean, "주말") {
+		return "", fmt.Errorf("주말(토/일)에는 학교 수업이 없습니다")
+	}
+	return "", fmt.Errorf("인식할 수 없는 요일입니다: %q (예: 월요일, 오늘, 내일)", clean)
 }
 
 func weekdayToKey(wd time.Weekday) string {

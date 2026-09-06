@@ -1,6 +1,8 @@
 package academy
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,3 +80,45 @@ func TestAcademyService_ReloadAndHasBusQuery(t *testing.T) {
 	assert.True(t, len(svc.ListAcademies()) > 0)
 }
 
+func TestAcademyService_LoadClassesOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	classesOnly := `{"academy":{"id":"a1","name":"코딩학원","vehicle_number":"12가3456","type":"등원"},"classes":[{"class_id":"c1","class_name":"A반","class_time":"15:00"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "classes_only.json"), []byte(classesOnly), 0o644))
+
+	svc := NewService()
+	require.NoError(t, svc.LoadFromDir(dir))
+	assert.Equal(t, []string{"코딩학원 (12가3456 등원)"}, svc.ListAcademies())
+}
+
+func TestAcademyService_SearchPrefersDisplaySchedules(t *testing.T) {
+	svc := NewService()
+	svc.AddSchedule(&BusSchedule{
+		Academy: AcademyMetadata{Name: "테스트학원", VehicleNumber: "12가3456", Type: "등원"},
+		Classes: []ClassInfo{{ClassID: "class_a", ClassName: "A반"}},
+		Stops: []StopInfo{{
+			Location:         "테스트정류장",
+			Schedules:        map[string]string{"class_a": "15:00"},
+			DisplaySchedules: map[string]string{"A반": "오후 3시"},
+		}},
+	})
+
+	results := svc.Search(SearchQuery{})
+	require.Len(t, results, 1)
+	assert.Equal(t, map[string]string{"A반": "오후 3시"}, results[0].Times)
+}
+
+func TestAcademyService_SearchFallsBackToRawSchedulesWithoutDisplay(t *testing.T) {
+	svc := NewService()
+	svc.AddSchedule(&BusSchedule{
+		Academy: AcademyMetadata{Name: "테스트학원", VehicleNumber: "12가3456", Type: "등원"},
+		Classes: []ClassInfo{{ClassID: "class_a", ClassName: "A반"}},
+		Stops: []StopInfo{{
+			Location:  "테스트정류장",
+			Schedules: map[string]string{"class_a": "15:00"},
+		}},
+	})
+
+	results := svc.Search(SearchQuery{})
+	require.Len(t, results, 1)
+	assert.Equal(t, map[string]string{"A반": "15:00"}, results[0].Times)
+}

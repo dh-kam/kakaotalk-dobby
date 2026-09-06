@@ -23,22 +23,27 @@ import (
 	"github.com/dh-kam/kakaotalk-dobby/pkg/openbuilder"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/scheduler"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/school"
+	"github.com/samber/lo"
 )
 
 // SkillServeRequest holds options for the OpenBuilder Skill Server.
 type SkillServeRequest struct {
-	ListenAddr    string
-	ChannelID     string
-	AIProvider    ai.Provider
-	Agent         agent.Agent
-	BusService    *academy.Service
-	SchoolService *school.Service
-	Scheduler     *scheduler.Engine
-	SessionStore  agent.SessionStore
-	SystemPrompt  string
-	DataDir       string
-	AdminToken    string
-	Out           io.Writer
+	ListenAddr             string
+	ChannelID              string
+	AIProvider             ai.Provider
+	Agent                  agent.Agent
+	BusService             *academy.Service
+	SchoolService          *school.Service
+	Scheduler              *scheduler.Engine
+	SessionStore           agent.SessionStore
+	SystemPrompt           string
+	DataDir                string
+	AdminToken             string
+	SlashRegistry          *SlashCommandRegistry
+	CallbackEnabled        bool
+	CallbackWaitingMessage string
+	CallbackProcessingTime time.Duration
+	Out                    io.Writer
 }
 
 var userLocks sync.Map
@@ -58,11 +63,30 @@ func NewSkillServeUseCase() *SkillServeUseCase {
 	return &SkillServeUseCase{}
 }
 
+// writeSkillJSON emits a skill response as the HTTP reply.
+func writeSkillJSON(w http.ResponseWriter, resp *openbuilder.SkillResponse) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type safeWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *safeWriter) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest) error {
-	out := req.Out
+	var out io.Writer = req.Out
 	if out == nil {
 		out = os.Stdout
 	}
+	out = &safeWriter{w: out}
 	if req.ListenAddr == "" {
 		req.ListenAddr = ":8080"
 	}
@@ -77,6 +101,13 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	if sessionStore == nil {
 		sessionStore = agent.NewMemorySessionStore(50)
 	}
+
+	slashRegistry := req.SlashRegistry
+	if slashRegistry == nil {
+		slashRegistry = GetDefaultSlashCommandRegistry()
+	}
+
+	cb := newCallbackConfig(req.CallbackEnabled, req.CallbackWaitingMessage, req.CallbackProcessingTime)
 
 	mux := http.NewServeMux()
 
@@ -102,7 +133,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 
 		var payload openbuilder.SkillPayload
 		if err := json.Unmarshal(body, &payload); err != nil {
-			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 			return
 		}
 
@@ -116,24 +147,30 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 			userID = "anonymous"
 		}
 
+		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", userID, utterance)
+
+		// Callback API path: acknowledge immediately, answer asynchronously
+		// under an extended budget instead of the Kakao 5.0s SLA.
+		if callbackURL := strings.TrimSpace(payload.UserRequest.CallbackURL); cb.Enabled && callbackEligible(callbackURL) {
+			writeSkillJSON(w, openbuilder.NewCallbackResponse(cb.WaitingMessage))
+			go runCallbackTurn(ctx, cb, callbackURL, utterance, userID, req, sessionStore, slashRegistry, out)
+			return
+		}
+
 		// Serialize concurrent turns per user to preserve chronological dialogue order
 		unlock := lockUser(userID)
 		defer unlock()
-
-		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", userID, utterance)
 
 		// Enforce a strict 4.2s global deadline to guarantee Kakao 5.0s SLA compliance
 		reqCtx, reqCancel := context.WithTimeout(r.Context(), 4200*time.Millisecond)
 		defer reqCancel()
 
-		respPayload := processUtterance(reqCtx, utterance, userID, req.ChannelID, req.BusService, req.SchoolService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt)
+		respPayload := processUtterance(reqCtx, utterance, userID, req.ChannelID, req.DataDir, req.AdminToken, req.BusService, req.SchoolService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt, slashRegistry)
 		if respPayload != nil {
 			respPayload.ValidateAndNormalize()
 		}
 
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(respPayload)
+		writeSkillJSON(w, respPayload)
 	}
 
 	mux.HandleFunc("/skill", handler)
@@ -156,6 +193,9 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
+	if cb.Enabled {
+		fmt.Fprintf(out, "  - Callback API: Enabled (%s processing budget)\n", cb.ProcessingTime)
+	}
 	if req.DataDir != "" {
 		fmt.Fprintf(out, "  - Data Directory:   %s\n", req.DataDir)
 	}
@@ -201,8 +241,38 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 }
 
-func processUtterance(ctx context.Context, utterance, userID, channelID string, busSvc *academy.Service, schoolSvc *school.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, sessionStore agent.SessionStore, systemPrompt string) *openbuilder.SkillResponse {
+func processUtterance(ctx context.Context, utterance, userID, channelID, dataDir, adminToken string, busSvc *academy.Service, schoolSvc *school.Service, schedEngine *scheduler.Engine, botAgent agent.Agent, aiProvider ai.Provider, sessionStore agent.SessionStore, systemPrompt string, slashRegistry *SlashCommandRegistry) *openbuilder.SkillResponse {
 	text := strings.ToLower(strings.TrimSpace(utterance))
+
+	// 0. Slash Command Dispatcher (Deterministic Sub-millisecond Execution).
+	// Only registered command names are dispatched; unrecognized slash-led text
+	// falls through to the natural-language paths below.
+	if strings.HasPrefix(strings.TrimSpace(utterance), "/") {
+		if slashRegistry == nil {
+			slashRegistry = GetDefaultSlashCommandRegistry()
+		}
+		cmdName, args := parseSlashCommand(utterance)
+		if _, found := slashRegistry.Find(cmdName); found {
+			cmdCtx := &CommandContext{
+				Ctx:          ctx,
+				RawText:      utterance,
+				Command:      cmdName,
+				Args:         args,
+				UserID:       userID,
+				ChannelID:    channelID,
+				DataDir:      dataDir,
+				AdminToken:   adminToken,
+				BusSvc:       busSvc,
+				SchoolSvc:    schoolSvc,
+				SchedEngine:  schedEngine,
+				SessionStore: sessionStore,
+			}
+			if resp := slashRegistry.Execute(cmdCtx); resp != nil {
+				appendFastPathTurn(sessionStore, userID, utterance, resp)
+				return resp
+			}
+		}
+	}
 
 	// 1. Conversation Reset Command
 	if text == "대화초기화" || text == "대화 초기화" || text == "리셋" || text == "reset" || text == "처음으로" || text == "기억지워" {
@@ -377,7 +447,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 
 	if botAgent != nil && agentTimeout >= 400*time.Millisecond {
 		agentCtx, agentCancel := context.WithTimeout(agent.WithUserID(ctx, userID), agentTimeout)
-		agentRes, err := botAgent.RunWithHistory(agentCtx, utterance, history)
+		agentRes, err := runAgentWithHardWall(agentCtx, botAgent, utterance, history)
 		agentCancel()
 
 		if err != nil {
@@ -421,8 +491,10 @@ func processUtterance(ctx context.Context, utterance, userID, channelID string, 
 		chatMsgs = append(chatMsgs, ai.ChatMessage{Role: "user", Content: utterance})
 
 		aiResp, err := aiProvider.GenerateResponse(fallbackCtx, ai.CompletionRequest{
-			SystemPrompt: agent.BuildDynamicSystemPrompt(systemPrompt),
-			Messages:     chatMsgs,
+			SystemPrompt: agent.BuildDynamicSystemPrompt(
+				withBotIdentity(systemPrompt, aiModelDisplayName(aiProvider.Model())),
+			),
+			Messages: chatMsgs,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
@@ -521,48 +593,50 @@ func handleSchoolTimetableFastPath(schoolSvc *school.Service, text string) *open
 	return resp
 }
 
-func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {
-	type aliasEntry struct {
-		keyword   string
-		canonical string
-		label     string
-	}
-	aliases := []aliasEntry{
-		{keyword: "우미린더스카이", canonical: "우미린2차", label: "우미린 2차 (더스카이)"},
-		{keyword: "더스카이", canonical: "우미린2차", label: "우미린 2차 (더스카이)"},
-		{keyword: "센트럴파크", canonical: "우미린2차", label: "우미린 2차 (센트럴파크)"},
-		{keyword: "풀하우스", canonical: "우미린1차", label: "우미린 1차 (풀하우스)"},
-		{keyword: "우미린 2차", canonical: "우미린2차", label: "우미린 2차"},
-		{keyword: "우미린2차", canonical: "우미린2차", label: "우미린 2차"},
-		{keyword: "우미린 1차", canonical: "우미린1차", label: "우미린 1차"},
-		{keyword: "우미린1차", canonical: "우미린1차", label: "우미린 1차"},
-		{keyword: "우미린", canonical: "우미린2차", label: "우미린 2차"},
-		{keyword: "해마루초", canonical: "해마루초", label: "해마루초"},
-		{keyword: "해마루", canonical: "해마루초", label: "해마루초"},
-		{keyword: "이편한", canonical: "이편한", label: "이편한"},
-		{keyword: "중흥 1차", canonical: "중흥1차", label: "중흥 1차"},
-		{keyword: "중흥1차", canonical: "중흥1차", label: "중흥 1차"},
-		{keyword: "중흥", canonical: "중흥", label: "중흥"},
-		{keyword: "현진 103동", canonical: "현진 103동", label: "현진 103동"},
-		{keyword: "현진 108동", canonical: "현진 108동", label: "현진 108동"},
-		{keyword: "현진 남문", canonical: "현진 남문", label: "현진 남문"},
-		{keyword: "현진", canonical: "현진", label: "현진"},
-		{keyword: "양포도서관", canonical: "양포도서관", label: "양포도서관"},
-		{keyword: "양포", canonical: "양포도서관", label: "양포도서관"},
-		{keyword: "호반베르디움", canonical: "호반", label: "호반"},
-		{keyword: "호반", canonical: "호반", label: "호반"},
-		{keyword: "원당초", canonical: "원당초", label: "원당초"},
-		{keyword: "원당", canonical: "원당초", label: "원당초"},
-	}
+type busAliasEntry struct {
+	keyword   string
+	canonical string
+	label     string
+}
 
+// busAliasTable maps colloquial stop names to canonical location keys.
+// Longer keywords must precede their shorter prefixes ("우미린 2차" before "우미린").
+var busAliasTable = []busAliasEntry{
+	{keyword: "우미린더스카이", canonical: "우미린2차", label: "우미린 2차 (더스카이)"},
+	{keyword: "더스카이", canonical: "우미린2차", label: "우미린 2차 (더스카이)"},
+	{keyword: "센트럴파크", canonical: "우미린2차", label: "우미린 2차 (센트럴파크)"},
+	{keyword: "풀하우스", canonical: "우미린1차", label: "우미린 1차 (풀하우스)"},
+	{keyword: "우미린 2차", canonical: "우미린2차", label: "우미린 2차"},
+	{keyword: "우미린2차", canonical: "우미린2차", label: "우미린 2차"},
+	{keyword: "우미린 1차", canonical: "우미린1차", label: "우미린 1차"},
+	{keyword: "우미린1차", canonical: "우미린1차", label: "우미린 1차"},
+	{keyword: "우미린", canonical: "우미린2차", label: "우미린 2차"},
+	{keyword: "해마루초", canonical: "해마루초", label: "해마루초"},
+	{keyword: "해마루", canonical: "해마루초", label: "해마루초"},
+	{keyword: "이편한", canonical: "이편한", label: "이편한"},
+	{keyword: "중흥 1차", canonical: "중흥1차", label: "중흥 1차"},
+	{keyword: "중흥1차", canonical: "중흥1차", label: "중흥 1차"},
+	{keyword: "중흥", canonical: "중흥", label: "중흥"},
+	{keyword: "현진 103동", canonical: "현진 103동", label: "현진 103동"},
+	{keyword: "현진 108동", canonical: "현진 108동", label: "현진 108동"},
+	{keyword: "현진 남문", canonical: "현진 남문", label: "현진 남문"},
+	{keyword: "현진", canonical: "현진", label: "현진"},
+	{keyword: "양포도서관", canonical: "양포도서관", label: "양포도서관"},
+	{keyword: "양포", canonical: "양포도서관", label: "양포도서관"},
+	{keyword: "호반베르디움", canonical: "호반", label: "호반"},
+	{keyword: "호반", canonical: "호반", label: "호반"},
+	{keyword: "원당초", canonical: "원당초", label: "원당초"},
+	{keyword: "원당", canonical: "원당초", label: "원당초"},
+}
+
+func handleBusScheduleFastPath(busSvc *academy.Service, text string) *openbuilder.SkillResponse {
 	var matchedLoc string
 	var displayLocName string
-	for _, a := range aliases {
-		if strings.Contains(text, a.keyword) {
-			matchedLoc = a.canonical
-			displayLocName = a.label
-			break
-		}
+	if matched, found := lo.Find(busAliasTable, func(a busAliasEntry) bool {
+		return strings.Contains(text, a.keyword)
+	}); found {
+		matchedLoc = matched.canonical
+		displayLocName = matched.label
 	}
 
 	academyQ := busSvc.MatchAcademyFromText(text)
@@ -732,6 +806,10 @@ func appendFastPathTurn(sessionStore agent.SessionStore, userID, utterance strin
 	}
 }
 
+// handleScheduleFastPath parses deterministic alarm requests (cancellation,
+// relative delay, recurring, or wall-clock one-shot) from Korean natural
+// language. It returns nil when the request is not recognized so the AI agent
+// can take over instead of silently scheduling a guessed time.
 func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance, userID string) *openbuilder.SkillResponse {
 	text := strings.TrimSpace(utterance)
 	loc := schedEngine.Location()
@@ -740,116 +818,144 @@ func handleScheduleFastPath(schedEngine *scheduler.Engine, utterance, userID str
 	}
 	now := time.Now().In(loc)
 
-	// Cancellation: e.g. "알림 취소 job_123" or "취소 job_123"
-	if strings.Contains(text, "취소") || strings.Contains(text, "삭제") {
-		fields := strings.Fields(text)
-		for _, f := range fields {
-			if strings.HasPrefix(f, "job_") {
-				if err := schedEngine.CancelJob(f, userID); err == nil {
-					resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("✅ 알림 ID %s 가 성공적으로 취소되었습니다.", f))
-					resp.AddQuickReply("알림 목록", "알림 목록")
-					resp.AddQuickReply("도움말", "도움말")
-					return resp
-				}
-			}
-		}
+	if resp := cancelJobFromText(schedEngine, text, userID); resp != nil {
+		return resp
 	}
 
-	// Recurring pattern: e.g. "매주 평일 오후 3시에 정상어학원 2호차 등원 알림 등록해줘"
-	if strings.Contains(text, "매주") || strings.Contains(text, "매일") || strings.Contains(text, "평일") {
-		var cronExpr string
-		var hour, min int = 15, 0 // default 15:00
-
-		if strings.Contains(text, "오후 3시") || strings.Contains(text, "15시") || strings.Contains(text, "15:00") {
-			hour = 15
-		} else if strings.Contains(text, "오전 8시") || strings.Contains(text, "8시") || strings.Contains(text, "08:00") {
-			hour = 8
-		} else if strings.Contains(text, "오후 4시") || strings.Contains(text, "16시") || strings.Contains(text, "16:00") {
-			hour = 16
-		} else if strings.Contains(text, "오후 5시") || strings.Contains(text, "17시") || strings.Contains(text, "17:00") {
-			hour = 17
-		}
-
-		if strings.Contains(text, "평일") || strings.Contains(text, "월~금") || strings.Contains(text, "월요일부터 금요일") {
-			cronExpr = fmt.Sprintf("%d %d * * 1-5", min, hour)
-		} else if strings.Contains(text, "매일") {
-			cronExpr = fmt.Sprintf("%d %d * * *", min, hour)
-		} else if strings.Contains(text, "주말") {
-			cronExpr = fmt.Sprintf("%d %d * * 6,0", min, hour)
-		} else {
-			cronExpr = fmt.Sprintf("%d %d * * 1-5", min, hour)
-		}
-
-		title := "정상어학원 2호차 등원 알림"
-		if strings.Contains(text, "라면") {
-			title = "라면 알림"
-		} else if strings.Contains(text, "비타민") {
-			title = "비타민 복용 알림"
-		}
-
-		msg := fmt.Sprintf("%s 시간입니다. (오후 %d:%02d) ⏰", title, hour, min)
-
-		job, err := schedEngine.ScheduleRecurring(userID, title, msg, cronExpr, nil)
-		if err == nil {
-			resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
-				"✅ 반복 알림이 등록되었습니다.\n\n• 제목: %s\n• 주기(Cron): %s (매주 평일 %02d:%02d)\n• 내용: %s",
-				job.Title, job.CronExpr, hour, min, job.Message,
-			))
-			resp.AddQuickReply("알림 목록", "알림 목록")
-			resp.AddQuickReply("도움말", "도움말")
-			return resp
-		}
+	content := truncateRunes(strings.TrimSpace(alarmContentFromText(text)), 30)
+	if content == "" {
+		content = "예약 알림"
 	}
 
-	// Relative one-shot: e.g. "10분 뒤에 라면 물 끄기 알림 등록해줘"
-	if strings.Contains(text, "분 뒤") || strings.Contains(text, "분후") || strings.Contains(text, "시간 뒤") || strings.Contains(text, "초 뒤") {
-		var dur time.Duration
-		fields := strings.Fields(text)
-		for _, f := range fields {
-			if strings.Contains(f, "분") {
-				numStr := strings.TrimRight(f, "분뒤후에 ")
-				if n, err := strconv.Atoi(numStr); err == nil {
-					dur += time.Duration(n) * time.Minute
-				}
-			} else if strings.Contains(f, "시간") {
-				numStr := strings.TrimRight(f, "시간뒤후에 ")
-				if n, err := strconv.Atoi(numStr); err == nil {
-					dur += time.Duration(n) * time.Hour
-				}
-			} else if strings.Contains(f, "초") {
-				numStr := strings.TrimRight(f, "초뒤후에 ")
-				if n, err := strconv.Atoi(numStr); err == nil {
-					dur += time.Duration(n) * time.Second
-				}
-			}
-		}
+	if resp, handled := scheduleRelativeAlarm(schedEngine, text, userID, content, now); handled {
+		return resp
+	}
+	if resp, handled := scheduleRecurringAlarm(schedEngine, text, userID, content); handled {
+		return resp
+	}
+	if resp, handled := scheduleWallClockAlarm(schedEngine, text, userID, content, now); handled {
+		return resp
+	}
+	return nil
+}
 
-		if dur > 0 {
-			execTime := now.Add(dur)
-			title := "예약 알림"
-			if strings.Contains(text, "라면") {
-				title = "라면 물/불 끄기 알림"
-			} else if strings.Contains(text, "버스") {
-				title = "학원 버스 알림"
-			} else if strings.Contains(text, "세탁") {
-				title = "세탁기 확인 알림"
-			}
-
-			msg := fmt.Sprintf("약속된 시간이 되었습니다! (%s) ⏰", title)
-			job, err := schedEngine.ScheduleOnce(userID, title, msg, execTime, nil)
-			if err == nil {
-				resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
-					"✅ 알림이 성공적으로 예약되었습니다.\n\n• 제목: %s\n• 예정 시각: %s (KST)\n• 내용: %s",
-					job.Title, job.ExecuteAt.Format("15:04:05"), job.Message,
-				))
+// cancelJobFromText cancels the job referenced by a "job_..." token in a
+// cancellation request such as "알림 취소 job_123".
+func cancelJobFromText(schedEngine *scheduler.Engine, text, userID string) *openbuilder.SkillResponse {
+	if !strings.Contains(text, "취소") && !strings.Contains(text, "삭제") {
+		return nil
+	}
+	for _, f := range strings.Fields(text) {
+		if strings.HasPrefix(f, "job_") {
+			if err := schedEngine.CancelJob(f, userID); err == nil {
+				resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf("✅ 알림 ID %s 가 성공적으로 취소되었습니다.", f))
 				resp.AddQuickReply("알림 목록", "알림 목록")
 				resp.AddQuickReply("도움말", "도움말")
 				return resp
 			}
 		}
 	}
-
 	return nil
+}
+
+// scheduleRelativeAlarm registers a one-shot alarm from a relative delay such
+// as "10분 뒤", "1시간 30분 후", or "30초 뒤". All duration tokens accumulate.
+func scheduleRelativeAlarm(schedEngine *scheduler.Engine, text, userID, content string, now time.Time) (*openbuilder.SkillResponse, bool) {
+	if !strings.Contains(text, "뒤") && !strings.Contains(text, "후") {
+		return nil, false
+	}
+
+	var dur time.Duration
+	for _, m := range durationRegex.FindAllStringSubmatch(text, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		switch m[2] {
+		case "시간":
+			dur += time.Duration(n) * time.Hour
+		case "분":
+			dur += time.Duration(n) * time.Minute
+		case "초":
+			dur += time.Duration(n) * time.Second
+		}
+	}
+	if dur <= 0 {
+		return nil, false
+	}
+
+	msg := fmt.Sprintf("약속된 시간이 되었습니다! (%s) ⏰", content)
+	job, err := schedEngine.ScheduleOnce(userID, content, msg, now.Add(dur), nil)
+	if err != nil {
+		return nil, false
+	}
+
+	resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
+		"✅ 알림이 성공적으로 예약되었습니다.\n\n• 제목: %s\n• 예정 시각: %s (KST)\n• 내용: %s",
+		job.Title, job.ExecuteAt.Format("01/02 15:04"), job.Message,
+	))
+	resp.AddQuickReply("알림 목록", "알림 목록")
+	resp.AddQuickReply("도움말", "도움말")
+	return resp, true
+}
+
+// scheduleRecurringAlarm registers a cron alarm when both a recurrence word
+// and an explicit wall-clock time are present; anything else is refused.
+func scheduleRecurringAlarm(schedEngine *scheduler.Engine, text, userID, content string) (*openbuilder.SkillResponse, bool) {
+	dow, recurLabel, ok := parseAlarmRecurrence(text)
+	if !ok {
+		return nil, false
+	}
+	hour, minute, ok := parseAlarmTime(text)
+	if !ok {
+		return nil, false
+	}
+
+	cronExpr := fmt.Sprintf("%d %d * * %s", minute, hour, dow)
+	msg := fmt.Sprintf("%s 시간입니다. (%s) ⏰", content, formatKoreanClock(hour, minute))
+	job, err := schedEngine.ScheduleRecurring(userID, content, msg, cronExpr, nil)
+	if err != nil {
+		return nil, false
+	}
+
+	resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
+		"✅ 반복 알림이 등록되었습니다.\n\n• 제목: %s\n• 주기: %s %s (Cron: %s)\n• 내용: %s",
+		job.Title, recurLabel, formatKoreanClock(hour, minute), job.CronExpr, job.Message,
+	))
+	resp.AddQuickReply("알림 목록", "알림 목록")
+	resp.AddQuickReply("도움말", "도움말")
+	return resp, true
+}
+
+// scheduleWallClockAlarm registers a one-shot alarm for an explicit time such
+// as "오후 8시에 알림줘"; a time already passed today rolls to tomorrow.
+func scheduleWallClockAlarm(schedEngine *scheduler.Engine, text, userID, content string, now time.Time) (*openbuilder.SkillResponse, bool) {
+	if strings.Contains(text, "매주") || strings.Contains(text, "매일") || strings.Contains(text, "평일") || strings.Contains(text, "주말") {
+		return nil, false
+	}
+	hour, minute, ok := parseAlarmTime(text)
+	if !ok {
+		return nil, false
+	}
+
+	execTime := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+	if !execTime.After(now) {
+		execTime = execTime.AddDate(0, 0, 1)
+	}
+
+	msg := fmt.Sprintf("약속된 시간이 되었습니다! (%s) ⏰", content)
+	job, err := schedEngine.ScheduleOnce(userID, content, msg, execTime, nil)
+	if err != nil {
+		return nil, false
+	}
+
+	resp := openbuilder.NewSimpleTextResponse(fmt.Sprintf(
+		"✅ 알림이 성공적으로 예약되었습니다.\n\n• 제목: %s\n• 예정 시각: %s (KST)\n• 내용: %s",
+		job.Title, job.ExecuteAt.Format("01/02 15:04"), job.Message,
+	))
+	resp.AddQuickReply("알림 목록", "알림 목록")
+	resp.AddQuickReply("도움말", "도움말")
+	return resp, true
 }
 
 func handleHolidayFastPath(text string) *openbuilder.SkillResponse {

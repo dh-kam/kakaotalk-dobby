@@ -91,7 +91,7 @@ func (t *ScheduleNotificationTool) Execute(ctx context.Context, argsJSON string)
 
 	userID := UserIDFromContext(ctx)
 	if userID == "" {
-		userID = "kakao_user"
+		userID = "anonymous"
 	}
 
 	var args struct {
@@ -169,6 +169,9 @@ func (t *ListSchedulesTool) Execute(ctx context.Context, argsJSON string) (strin
 	}
 
 	userID := UserIDFromContext(ctx)
+	if userID == "" {
+		userID = "anonymous"
+	}
 	jobs := t.engine.ListJobs(userID)
 	if len(jobs) == 0 {
 		return "현재 등록된 스케줄 및 알림이 없습니다.", nil
@@ -240,6 +243,9 @@ func (t *CancelScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 	}
 
 	userID := UserIDFromContext(ctx)
+	if userID == "" {
+		userID = "anonymous"
+	}
 	if err := t.engine.CancelJob(args.JobID, userID); err != nil {
 		return fmt.Sprintf("Error cancelling schedule %s: %v", args.JobID, err), nil
 	}
@@ -339,6 +345,9 @@ func (t *UpdateScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 	}
 
 	userID := UserIDFromContext(ctx)
+	if userID == "" {
+		userID = "anonymous"
+	}
 	job, err := t.engine.UpdateJob(args.JobID, update, userID)
 	if err != nil {
 		return fmt.Sprintf("Error updating schedule %s: %v", args.JobID, err), nil
@@ -397,6 +406,9 @@ func (t *DeleteScheduleTool) Execute(ctx context.Context, argsJSON string) (stri
 	}
 
 	userID := UserIDFromContext(ctx)
+	if userID == "" {
+		userID = "anonymous"
+	}
 	if err := t.engine.DeleteJob(args.JobID, userID); err != nil {
 		return fmt.Sprintf("Error deleting schedule %s: %v", args.JobID, err), nil
 	}
