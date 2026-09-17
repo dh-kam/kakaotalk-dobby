@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -19,6 +21,8 @@ import (
 // Kakao asks the callback answer to reach the callbackUrl within one minute;
 // keep a margin for the delivery round trip itself.
 const defaultCallbackProcessingBudget = 50 * time.Second
+
+const callbackDeliveryBudget = 5 * time.Second
 
 // DefaultCallbackWaitingMessage is the immediate ack shown while the real
 // answer is still being generated.
@@ -40,11 +44,28 @@ func newCallbackConfig(enabled bool, waitingMessage string, processingTime time.
 	if processingTime <= 0 {
 		processingTime = defaultCallbackProcessingBudget
 	}
+	if processingTime > defaultCallbackProcessingBudget {
+		processingTime = defaultCallbackProcessingBudget
+	}
+	dialer := callbackDialer{resolver: net.DefaultResolver}
 	return callbackConfig{
 		Enabled:        enabled,
 		WaitingMessage: waitingMessage,
 		ProcessingTime: processingTime,
-		HTTPClient:     &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: &http.Client{
+			Timeout: callbackDeliveryBudget,
+			// Callback URLs are one-time endpoints, not redirect entry points.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			Transport: &http.Transport{
+				// No environment proxy: every connection must use the validated IP.
+				DialContext:            dialer.DialContext,
+				ForceAttemptHTTP2:      true,
+				TLSHandshakeTimeout:    callbackDeliveryBudget,
+				IdleConnTimeout:        30 * time.Second,
+				MaxIdleConns:           20,
+				MaxResponseHeaderBytes: 16 * 1024,
+			},
+		},
 	}
 }
 
@@ -74,23 +95,82 @@ func callbackEligible(rawURL string) bool {
 		return false
 	}
 	u, err := url.Parse(trimmed)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return false
 	}
 
 	host := strings.ToLower(u.Hostname())
 
-	// Loopback is allowed for local testing (HTTP or HTTPS)
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return u.Scheme == "http" || u.Scheme == "https"
-	}
-
-	// External targets MUST use HTTPS and belong to verified platform domains
-	if u.Scheme != "https" {
+	if u.Scheme != "https" || (u.Port() != "" && u.Port() != "443") {
 		return false
 	}
 
 	return isAllowedDomain(host)
+}
+
+type callbackResolver interface {
+	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
+}
+
+type callbackDialer struct {
+	resolver callbackResolver
+}
+
+// DialContext resolves once, rejects non-public answers, then dials a literal
+// address. The connection cannot re-resolve the hostname after validation.
+func (d callbackDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || port != "443" || !isAllowedDomain(host) {
+		return nil, fmt.Errorf("invalid callback connection target")
+	}
+	addresses, err := d.resolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve callback host: %w", err)
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("callback host has no addresses")
+	}
+	for _, addr := range addresses {
+		if !isPublicCallbackIP(addr) {
+			return nil, fmt.Errorf("callback host resolves to a non-public address")
+		}
+	}
+	dialer := net.Dialer{Timeout: callbackDeliveryBudget, KeepAlive: 30 * time.Second}
+	for _, addr := range addresses {
+		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		err = dialErr
+	}
+	return nil, fmt.Errorf("connect to callback host: %w", err)
+}
+
+var nonPublicCallbackRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
+func isPublicCallbackIP(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() {
+		return false
+	}
+	for _, prefix := range nonPublicCallbackRanges {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
 }
 
 // kakaoCallbackAck is the CallbackResponse Kakao returns after a delivery.
@@ -104,6 +184,9 @@ type kakaoCallbackAck struct {
 // deliverCallbackResponse POSTs the final response to the one-time callback
 // URL and verifies Kakao accepted it.
 func deliverCallbackResponse(ctx context.Context, client *http.Client, callbackURL string, resp *openbuilder.SkillResponse, out io.Writer) error {
+	if !callbackEligible(callbackURL) {
+		return fmt.Errorf("invalid callback URL")
+	}
 	body, err := json.Marshal(resp)
 	if err != nil {
 		return fmt.Errorf("marshal callback response: %w", err)
@@ -120,6 +203,9 @@ func deliverCallbackResponse(ctx context.Context, client *http.Client, callbackU
 		return fmt.Errorf("post callback response: %w", err)
 	}
 	defer httpResp.Body.Close()
+	if httpResp.StatusCode < http.StatusOK || httpResp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("callback returned HTTP %d", httpResp.StatusCode)
+	}
 
 	var ack kakaoCallbackAck
 	if err := json.NewDecoder(io.LimitReader(httpResp.Body, 16*1024)).Decode(&ack); err != nil {
@@ -155,7 +241,11 @@ func runCallbackTurn(ctx context.Context, cb callbackConfig, callbackURL, uttera
 	}
 	resp.ValidateAndNormalize()
 
-	if err := deliverCallbackResponse(bgCtx, cb.HTTPClient, callbackURL, resp, out); err != nil {
+	// Delivery gets its own bounded window even when generation consumed its
+	// entire budget. Both contexts still stop when the server shuts down.
+	deliveryCtx, deliveryCancel := context.WithTimeout(ctx, callbackDeliveryBudget)
+	defer deliveryCancel()
+	if err := deliverCallbackResponse(deliveryCtx, cb.HTTPClient, callbackURL, resp, out); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️ [Callback] delivery failed for user %s: %v\n", userID, err)
 	}
 }

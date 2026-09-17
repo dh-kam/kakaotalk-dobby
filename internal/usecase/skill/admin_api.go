@@ -26,11 +26,15 @@ type adminResponse struct {
 }
 
 func checkAdminAuth(r *http.Request, token string) bool {
+	return checkTokenAuth(r, "X-Admin-Token", token)
+}
+
+func checkTokenAuth(r *http.Request, header, token string) bool {
 	if token == "" {
 		// When no token is configured, fail-closed for safety
 		return false
 	}
-	given := r.Header.Get("X-Admin-Token")
+	given := r.Header.Get(header)
 	if given == "" {
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {

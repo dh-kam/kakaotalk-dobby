@@ -60,6 +60,7 @@ func TestE2E_DataDirDynamicIngestionAndQuery(t *testing.T) {
 
 	go func() {
 		_ = useCase.Execute(ctx, SkillServeRequest{
+			SkillToken:    testSkillToken,
 			ListenAddr:    serverAddr,
 			ChannelID:     "0xc0de1ab",
 			AIProvider:    mockAI,
@@ -331,7 +332,7 @@ func sendSkillMessage(t *testing.T, baseURL, utterance string) openbuilder.Skill
 	}
 	body, _ := json.Marshal(payload)
 
-	resp, err := http.Post(baseURL+"/skill", "application/json", bytes.NewReader(body))
+	resp, err := postSkillRequest(t, baseURL+"/skill", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

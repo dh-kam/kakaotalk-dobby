@@ -41,3 +41,7 @@ data/jobs.json
 data/schedules/jobs.json
 data/**/jobs.json
 
+# Web frontend
+web/node_modules/
+web/dist/
+

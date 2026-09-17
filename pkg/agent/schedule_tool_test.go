@@ -33,7 +33,7 @@ func TestScheduleNotificationTool_OnceAndList(t *testing.T) {
 	assert.Contains(t, listRes, "정상어학원 등원 알림")
 
 	// 3. Cancel
-	jobs := engine.ListJobs("")
+	jobs := engine.ListJobs("anonymous")
 	require.Len(t, jobs, 1)
 	jobID := jobs[0].ID
 

@@ -41,6 +41,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 		ChannelID              string        `flag:"channel-id" usage:"KakaoTalk channel search ID"`
 		DataDir                string        `flag:"data-dir" usage:"Directory containing schedule and timetable JSON data files"`
 		AdminToken             string        `flag:"admin-token" usage:"Administrative API bearer token for uploading and reloading data"`
+		SkillToken             string        `flag:"skill-token" usage:"Required shared secret for X-Skill-Token on OpenBuilder requests"`
 		AIProvider             string        `flag:"ai-provider" usage:"AI LLM provider (openai, gemini, claude, ollama, grok, deepseek, grok, mock)"`
 		AIAPIKey               string        `flag:"ai-api-key" usage:"AI Provider API key"`
 		AIBaseURL              string        `flag:"ai-base-url" usage:"Custom AI base URL (e.g. for Ollama http://localhost:11434/v1)"`
@@ -56,6 +57,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 		String("channel-id", "0xc0de1ab", "KakaoTalk channel search ID").
 		String("data-dir", cfg.DataDir, "Directory containing schedule and timetable JSON data files").
 		String("admin-token", cfg.AdminToken, "Administrative API bearer token for uploading and reloading data").
+		String("skill-token", cfg.SkillToken, "Required shared secret for X-Skill-Token on OpenBuilder requests").
 		String("ai-provider", cfg.AIProvider, "AI LLM provider (openai, gemini, claude, ollama, grok, deepseek, grok, mock)").
 		String("ai-api-key", cfg.AIAPIKey, "AI Provider API key").
 		String("ai-base-url", cfg.AIBaseURL, "Custom AI base URL").
@@ -72,6 +74,10 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 		SilenceErrors: true,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if err := binder.BindCommand(cmd, &opts, args...); err != nil {
+				_ = cmd.Usage()
+				return err
+			}
+			if err := skill.ValidateServeOptions(opts.SkillToken, opts.CallbackTimeout); err != nil {
 				_ = cmd.Usage()
 				return err
 			}
@@ -125,7 +131,7 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			schedEngine := scheduler.NewEngine(store, dispatcher.HandleJob)
 
 			if err := schedEngine.Start(cmd.Context()); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "⚠️ Failed to start scheduler engine: %v\n", err)
+				return fmt.Errorf("start scheduler engine: %w", err)
 			}
 			defer schedEngine.Stop()
 
@@ -158,15 +164,15 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 				botAgent = agent.NewAgent(agent.AgentConfig{
 					Provider: dynamicProv,
 					Tools:    registry,
-						PromptFunc: func() string {
-							domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
-							return fmt.Sprintf(`You are a helpful, polite KakaoTalk AI assistant for channel @%s.
+					PromptFunc: func() string {
+						domainKnowledge := agent.BuildDomainKnowledge(busSvc, schoolSvc)
+						return fmt.Sprintf(`You are a helpful, polite KakaoTalk AI assistant for channel @%s.
 You have access to tools for checking current time/date/weekday (get_current_time in KST), checking Korean public holidays/business days (check_korean_holiday), looking up academy bus schedules (get_bus_schedule), looking up elementary school class timetables (get_school_timetable), managing notifications/reminders, and checking server status.
 Always answer politely, naturally, and concisely in Korean formatted for mobile screens.
 
 %s`, opts.ChannelID, domainKnowledge)
-						},
-						MaxIterations: 3,
+					},
+					MaxIterations: 3,
 				})
 			}
 
@@ -183,6 +189,7 @@ Always answer politely, naturally, and concisely in Korean formatted for mobile 
 				SystemPrompt:           opts.AISystemPrompt,
 				DataDir:                opts.DataDir,
 				AdminToken:             opts.AdminToken,
+				SkillToken:             opts.SkillToken,
 				CallbackEnabled:        opts.CallbackEnabled,
 				CallbackWaitingMessage: opts.CallbackWaitingMessage,
 				CallbackProcessingTime: opts.CallbackTimeout,
@@ -192,6 +199,6 @@ Always answer politely, naturally, and concisely in Korean formatted for mobile 
 	}
 
 	binder.SetTo(cmd.Flags())
-	maskFlagDefaults(cmd, "admin-token", "ai-api-key")
+	maskFlagDefaults(cmd, "admin-token", "skill-token", "ai-api-key")
 	return cmd
 }

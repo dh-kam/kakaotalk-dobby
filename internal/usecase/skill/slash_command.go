@@ -38,11 +38,11 @@ type CommandContext struct {
 }
 
 // verifyAdminToken reports whether the command carries the configured admin token.
-// The token must be supplied as the final argument; an empty AdminToken keeps the
-// command open, mirroring the /api/data/* dev mode.
+// The token must be supplied as the final argument. Missing configuration denies
+// access, just like the administrative HTTP API.
 func (cc *CommandContext) verifyAdminToken() bool {
 	if cc.AdminToken == "" {
-		return true
+		return false
 	}
 	if len(cc.Args) == 0 {
 		return false
@@ -69,6 +69,7 @@ type CommandSpec struct {
 	Usage       string
 	Category    string
 	Handler     CommandHandler
+	Sensitive   bool // Exclude command arguments from logs and conversation history.
 }
 
 // SlashCommandRegistry manages registered slash commands and routes invocations.
@@ -253,9 +254,10 @@ func NewDefaultSlashCommandRegistry() *SlashCommandRegistry {
 		Name:        "data",
 		Aliases:     []string{"catalog", "데이터"},
 		Description: "데이터 디렉토리 카탈로그 확인 및 런타임 핫리로드",
-		Usage:       "/data [list|reload] [관리자토큰]",
+		Usage:       "/data [list|reload] <관리자토큰>",
 		Category:    "관리/운영",
 		Handler:     cmdDataHandler,
+		Sensitive:   true,
 	})
 
 	r.Register(CommandSpec{

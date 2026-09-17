@@ -44,11 +44,12 @@ type AppConfig struct {
 	BedrockRegion      string
 	DataDir            string
 	AdminToken         string
+	SkillToken         string
 
 	GroqAPIKey            string
-	STTFallbackLocal       bool
-	LocalWhisperModelPath  string
-	LocalWhisperBinPath    string
+	STTFallbackLocal      bool
+	LocalWhisperModelPath string
+	LocalWhisperBinPath   string
 }
 
 // resolveAIKey picks the API key matching the requested provider first, so an
@@ -136,27 +137,28 @@ func Load() *AppConfig {
 	}
 
 	cfg := &AppConfig{
-		ClientID:           os.Getenv("KAKAO_REST_API_KEY"),
-		ClientSecret:       os.Getenv("KAKAO_CLIENT_SECRET"),
-		RedirectURI:        os.Getenv("KAKAO_REDIRECT_URI"),
-		TokenPath:          os.Getenv("KAKAO_TOKEN_PATH"),
-		AIProvider:         aiProvider,
-		AIAPIKey:           aiKey,
-		AIBaseURL:          os.Getenv("AI_BASE_URL"),
-		AIModel:            aiModel,
-		AISystemPrompt:     os.Getenv("AI_SYSTEM_PROMPT"),
-		VertexAPIKey:       os.Getenv("VERTEX_API_KEY"),
-		VertexProject:      vertexProject,
-		VertexLocation:     vertexLocation,
-		VertexModel:        vertexModel,
-		BedrockBearerToken: os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
-		BedrockRegion:      bedrockRegion,
-		DataDir:            getDataDir(),
-		AdminToken:         getAdminToken(),
+		ClientID:              os.Getenv("KAKAO_REST_API_KEY"),
+		ClientSecret:          os.Getenv("KAKAO_CLIENT_SECRET"),
+		RedirectURI:           os.Getenv("KAKAO_REDIRECT_URI"),
+		TokenPath:             os.Getenv("KAKAO_TOKEN_PATH"),
+		AIProvider:            aiProvider,
+		AIAPIKey:              aiKey,
+		AIBaseURL:             os.Getenv("AI_BASE_URL"),
+		AIModel:               aiModel,
+		AISystemPrompt:        os.Getenv("AI_SYSTEM_PROMPT"),
+		VertexAPIKey:          os.Getenv("VERTEX_API_KEY"),
+		VertexProject:         vertexProject,
+		VertexLocation:        vertexLocation,
+		VertexModel:           vertexModel,
+		BedrockBearerToken:    os.Getenv("AWS_BEARER_TOKEN_BEDROCK"),
+		BedrockRegion:         bedrockRegion,
+		DataDir:               getDataDir(),
+		AdminToken:            getAdminToken(),
+		SkillToken:            os.Getenv("KAKAO_SKILL_TOKEN"),
 		GroqAPIKey:            os.Getenv("GROQ_API_KEY"),
-		STTFallbackLocal:       strings.EqualFold(os.Getenv("STT_ENABLE_FALLBACK"), "true") || os.Getenv("STT_ENABLE_FALLBACK") == "1",
-		LocalWhisperModelPath:  os.Getenv("WHISPER_MODEL_PATH"),
-		LocalWhisperBinPath:    os.Getenv("WHISPER_BIN_PATH"),
+		STTFallbackLocal:      strings.EqualFold(os.Getenv("STT_ENABLE_FALLBACK"), "true") || os.Getenv("STT_ENABLE_FALLBACK") == "1",
+		LocalWhisperModelPath: os.Getenv("WHISPER_MODEL_PATH"),
+		LocalWhisperBinPath:   os.Getenv("WHISPER_BIN_PATH"),
 	}
 
 	if cfg.RedirectURI == "" {

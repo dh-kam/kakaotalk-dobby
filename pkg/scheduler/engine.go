@@ -56,10 +56,6 @@ func NewEngine(store Store, handler Handler, opts ...EngineOption) *Engine {
 
 	e.cronRunner = cron.New(
 		cron.WithLocation(e.loc),
-		cron.WithSeconds(),
-		cron.WithParser(cron.NewParser(
-			cron.SecondOptional|cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
-		)),
 		cron.WithChain(
 			cron.Recover(cron.DefaultLogger),
 			cron.SkipIfStillRunning(cron.DefaultLogger),
@@ -86,10 +82,6 @@ func (e *Engine) Start(parentCtx context.Context) error {
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
-	e.ctx, e.cancel = context.WithCancel(parentCtx)
-	e.cronRunner.Start()
-	e.running = true
-
 	// Auto-prune jobs completed or cancelled more than 7 days ago
 	e.purgeCompletedJobsLocked(7 * 24 * time.Hour)
 
@@ -100,6 +92,7 @@ func (e *Engine) Start(parentCtx context.Context) error {
 	}
 
 	now := time.Now().In(e.loc)
+	schedules := make(map[string]cron.Schedule)
 	for _, job := range jobs {
 		if job.Status != JobStatusActive {
 			continue
@@ -109,14 +102,32 @@ func (e *Engine) Start(parentCtx context.Context) error {
 			if job.ExecuteAt.Before(now) {
 				// Mark missed past jobs as completed
 				job.Status = JobStatusCompleted
-				_ = e.store.Save(job)
+				if err := e.store.Save(job); err != nil {
+					return fmt.Errorf("complete missed job %s: %w", job.ID, err)
+				}
 				continue
 			}
-			e.scheduleTimerLocked(job)
 		} else if job.Type == ScheduleTypeRecurring {
-			_ = e.scheduleCronLocked(job)
+			schedule, err := parseCron(job.CronExpr)
+			if err != nil {
+				return fmt.Errorf("restore job %s: %w", job.ID, err)
+			}
+			schedules[job.ID] = schedule
 		}
 	}
+	e.ctx, e.cancel = context.WithCancel(parentCtx)
+	e.running = true
+	for _, job := range jobs {
+		if job.Status != JobStatusActive {
+			continue
+		}
+		if job.Type == ScheduleTypeOnce {
+			e.scheduleTimerLocked(job)
+		} else if job.Type == ScheduleTypeRecurring {
+			e.scheduleCronLocked(job, schedules[job.ID])
+		}
+	}
+	e.cronRunner.Start()
 
 	return nil
 }
@@ -135,6 +146,9 @@ func (e *Engine) Stop() {
 
 	for _, timer := range e.timerMap {
 		timer.Stop()
+	}
+	for _, entryID := range e.entryMap {
+		e.cronRunner.Remove(entryID)
 	}
 	e.timerMap = make(map[string]*time.Timer)
 	e.entryMap = make(map[string]cron.EntryID)
@@ -168,23 +182,28 @@ func (e *Engine) ScheduleOnce(userID, title, message string, executeAt time.Time
 		CreatedAt: now,
 		Status:    JobStatusActive,
 		Payload:   payload,
+		Revision:  1,
 	}
 
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if err := e.store.Save(job); err != nil {
 		return nil, fmt.Errorf("save job: %w", err)
 	}
 
-	e.mu.Lock()
 	if e.running {
 		e.scheduleTimerLocked(job)
 	}
-	e.mu.Unlock()
 
 	return job.Clone(), nil
 }
 
 // ScheduleRecurring creates and schedules a recurring cron notification.
 func (e *Engine) ScheduleRecurring(userID, title, message string, cronExpr string, payload map[string]string) (*Job, error) {
+	schedule, err := parseCron(cronExpr)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().In(e.loc)
 
 	job := &Job{
@@ -197,22 +216,18 @@ func (e *Engine) ScheduleRecurring(userID, title, message string, cronExpr strin
 		CreatedAt: now,
 		Status:    JobStatusActive,
 		Payload:   payload,
+		Revision:  1,
 	}
 
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if err := e.store.Save(job); err != nil {
 		return nil, fmt.Errorf("save job: %w", err)
 	}
 
-	e.mu.Lock()
 	if e.running {
-		if err := e.scheduleCronLocked(job); err != nil {
-			e.mu.Unlock()
-			job.Status = JobStatusFailed
-			_ = e.store.Save(job)
-			return nil, err
-		}
+		e.scheduleCronLocked(job, schedule)
 	}
-	e.mu.Unlock()
 
 	return job.Clone(), nil
 }
@@ -224,78 +239,92 @@ func (e *Engine) scheduleTimerLocked(job *Job) {
 	}
 
 	jobID := job.ID
+	revision, runCtx := job.Revision, e.ctx
 	timer := time.AfterFunc(delay, func() {
-		e.executeJob(jobID)
+		e.executeJob(jobID, revision, runCtx)
 	})
 
 	e.timerMap[jobID] = timer
 }
 
-func (e *Engine) scheduleCronLocked(job *Job) error {
-	jobID := job.ID
-	entryID, err := e.cronRunner.AddFunc(job.CronExpr, func() {
-		e.executeJob(jobID)
-	})
+func parseCron(expr string) (cron.Schedule, error) {
+	schedule, err := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor).Parse(expr)
 	if err != nil {
-		return fmt.Errorf("invalid cron expression %q: %w", job.CronExpr, err)
+		return nil, fmt.Errorf("invalid cron expression %q: %w", expr, err)
 	}
-
-	e.entryMap[jobID] = entryID
-	return nil
+	return schedule, nil
 }
 
-func (e *Engine) executeJob(jobID string) {
+func (e *Engine) scheduleCronLocked(job *Job, schedule cron.Schedule) {
+	jobID, revision, runCtx := job.ID, job.Revision, e.ctx
+	e.entryMap[jobID] = e.cronRunner.Schedule(schedule, cron.FuncJob(func() {
+		e.executeJob(jobID, revision, runCtx)
+	}))
+}
+
+func (e *Engine) executeJob(jobID string, revision uint64, runCtx context.Context) {
 	e.mu.Lock()
+	if !e.running || e.ctx != runCtx {
+		e.mu.Unlock()
+		return
+	}
+	job, err := e.store.Get(jobID)
+	if err != nil || job.Status != JobStatusActive || job.Revision != revision {
+		e.mu.Unlock()
+		return
+	}
 	if timer, ok := e.timerMap[jobID]; ok {
 		timer.Stop()
 		delete(e.timerMap, jobID)
 	}
 	e.mu.Unlock()
 
-	job, err := e.store.Get(jobID)
-	if err != nil || job.Status != JobStatusActive {
-		return
-	}
-
 	now := time.Now().In(e.loc)
 	job.LastFiredAt = &now
 
 	var handlerErr error
 	if e.handler != nil {
-		e.mu.RLock()
-		ctx := e.ctx
-		e.mu.RUnlock()
-
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		if err := e.handler(ctx, job); err != nil {
+		if err := e.handler(runCtx, job); err != nil {
 			handlerErr = err
 			fmt.Fprintf(os.Stderr, "⚠️ [Scheduler] Job %s handler error: %v\n", jobID, err)
 		}
 	}
 
-	if job.Type == ScheduleTypeOnce {
+	// Merge execution metadata into the latest committed job. A deletion,
+	// cancellation or reschedule wins over this in-flight delivery.
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.running || e.ctx != runCtx {
+		return
+	}
+	current, err := e.store.Get(jobID)
+	if err != nil || current.Status != JobStatusActive || current.Revision != revision {
+		return
+	}
+	current.LastFiredAt = &now
+	if current.Type == ScheduleTypeOnce {
 		if handlerErr == nil {
-			job.Status = JobStatusCompleted
+			current.Status = JobStatusCompleted
 		} else {
-			job.Status = JobStatusFailed
+			current.Status = JobStatusFailed
 		}
 	}
 
-	_ = e.store.Save(job)
+	if err := e.store.Save(current); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️ [Scheduler] Failed to persist execution of job %s: %v\n", jobID, err)
+	}
 }
 
 // authorizeOwner enforces per-user isolation on job mutations.
 // With no ownerUserID argument the call is administrative and unrestricted.
-// With one, an empty job UserID matches any owner, while a populated job UserID
-// must equal the caller exactly (case-insensitive).
+// With one, a nonempty job UserID must equal the caller exactly. Legacy ownerless
+// jobs are accessible only through the explicit administrative path.
 func authorizeOwner(job *Job, id string, ownerUserID []string) error {
 	if len(ownerUserID) == 0 {
 		return nil
 	}
-	requiredUser := strings.TrimSpace(ownerUserID[0])
-	if job.UserID == "" || strings.EqualFold(job.UserID, requiredUser) {
+	requiredUser := ownerUserID[0]
+	if requiredUser != "" && requiredUser != "*" && requiredUser == strings.TrimSpace(requiredUser) && job.UserID == requiredUser {
 		return nil
 	}
 	return fmt.Errorf("permission denied: job %s belongs to another user", id)
@@ -316,17 +345,12 @@ func (e *Engine) CancelJob(id string, ownerUserID ...string) error {
 	}
 
 	job.Status = JobStatusCancelled
-	_ = e.store.Save(job)
-
-	if timer, ok := e.timerMap[id]; ok {
-		timer.Stop()
-		delete(e.timerMap, id)
+	job.Revision++
+	if err := e.store.Save(job); err != nil {
+		return fmt.Errorf("persist cancellation: %w", err)
 	}
 
-	if entryID, ok := e.entryMap[id]; ok {
-		e.cronRunner.Remove(entryID)
-		delete(e.entryMap, id)
-	}
+	e.removeTriggerLocked(id)
 
 	return nil
 }
@@ -345,14 +369,8 @@ func (e *Engine) UpdateJob(id string, update JobUpdate, ownerUserID ...string) (
 		return nil, err
 	}
 
-	// Stop and remove existing schedule triggers
-	if timer, ok := e.timerMap[id]; ok {
-		timer.Stop()
-		delete(e.timerMap, id)
-	}
-	if entryID, ok := e.entryMap[id]; ok {
-		e.cronRunner.Remove(entryID)
-		delete(e.entryMap, id)
+	if update.ExecuteAt != nil && update.CronExpr != nil {
+		return nil, fmt.Errorf("execute_at and cron_expr cannot both be updated")
 	}
 
 	// Apply updates
@@ -376,23 +394,40 @@ func (e *Engine) UpdateJob(id string, update JobUpdate, ownerUserID ...string) (
 		job.Status = *update.Status
 	}
 
-	// Re-arm schedule trigger if job is active
-	if job.Status == JobStatusActive {
-		if job.Type == ScheduleTypeOnce {
-			if job.ExecuteAt.After(time.Now().In(e.loc)) {
-				e.scheduleTimerLocked(job)
-			} else {
-				job.Status = JobStatusCompleted
-			}
-		} else if job.Type == ScheduleTypeRecurring {
-			if err := e.scheduleCronLocked(job); err != nil {
-				return nil, err
-			}
+	reschedule := update.ExecuteAt != nil || update.CronExpr != nil || update.Status != nil
+	var schedule cron.Schedule
+	if job.Type == ScheduleTypeRecurring {
+		schedule, err = parseCron(job.CronExpr)
+		if err != nil {
+			return nil, err
 		}
+	}
+	if reschedule && job.Status == JobStatusActive && job.Type == ScheduleTypeOnce && !job.ExecuteAt.After(time.Now().In(e.loc)) {
+		return nil, fmt.Errorf("execute time must be in the future")
+	}
+	switch job.Status {
+	case JobStatusActive, JobStatusCompleted, JobStatusCancelled, JobStatusFailed:
+	default:
+		return nil, fmt.Errorf("invalid job status %q", job.Status)
+	}
+	if reschedule {
+		job.Revision++
 	}
 
 	if err := e.store.Save(job); err != nil {
 		return nil, err
+	}
+	// Only replace triggers after validation and persistence succeed. Metadata
+	// edits preserve the current trigger and may be merged by an in-flight run.
+	if reschedule {
+		e.removeTriggerLocked(id)
+		if e.running && job.Status == JobStatusActive {
+			if job.Type == ScheduleTypeOnce {
+				e.scheduleTimerLocked(job)
+			} else if job.Type == ScheduleTypeRecurring {
+				e.scheduleCronLocked(job, schedule)
+			}
+		}
 	}
 	return job.Clone(), nil
 }
@@ -411,6 +446,14 @@ func (e *Engine) DeleteJob(id string, ownerUserID ...string) error {
 		return err
 	}
 
+	if err := e.store.Delete(id); err != nil {
+		return err
+	}
+	e.removeTriggerLocked(id)
+	return nil
+}
+
+func (e *Engine) removeTriggerLocked(id string) {
 	if timer, ok := e.timerMap[id]; ok {
 		timer.Stop()
 		delete(e.timerMap, id)
@@ -419,29 +462,22 @@ func (e *Engine) DeleteJob(id string, ownerUserID ...string) error {
 		e.cronRunner.Remove(entryID)
 		delete(e.entryMap, id)
 	}
-
-	return e.store.Delete(id)
 }
 
-// ListJobs returns jobs filtered by user ID. If userID is empty or "*", it returns all jobs.
+// ListJobs returns only jobs owned by the exact user ID. Administrative callers
+// must use ListAllJobs; empty, whitespace and wildcard IDs cannot widen access.
 func (e *Engine) ListJobs(userID string) []*Job {
+	if userID == "" || userID == "*" || userID != strings.TrimSpace(userID) {
+		return nil
+	}
 	jobs, err := e.store.List()
 	if err != nil {
 		return nil
 	}
 
-	cleanUser := strings.TrimSpace(userID)
-	if cleanUser == "" || cleanUser == "*" {
-		list := make([]*Job, 0, len(jobs))
-		for _, j := range jobs {
-			list = append(list, j.Clone())
-		}
-		return list
-	}
-
 	filtered := make([]*Job, 0)
 	for _, j := range jobs {
-		if strings.EqualFold(j.UserID, cleanUser) {
+		if j.UserID == userID {
 			filtered = append(filtered, j.Clone())
 		}
 	}

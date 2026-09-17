@@ -251,8 +251,10 @@ func TestScheduler_OwnerAuthorizationSemantics(t *testing.T) {
 	assert.Error(t, engine.CancelJob(named.ID, "bob"))
 	require.NoError(t, engine.CancelJob(named.ID, "alice"))
 
-	// Empty job owner matches any caller (legacy/dev mode).
-	require.NoError(t, engine.CancelJob(legacy.ID, "bob"))
+	// Ownerless legacy jobs require an administrative call.
+	require.Error(t, engine.CancelJob(legacy.ID, "bob"))
+	require.Error(t, engine.CancelJob(legacy.ID, ""))
+	require.NoError(t, engine.CancelJob(legacy.ID))
 
 	// Administrative call without an owner argument is unrestricted.
 	adminTarget, err := engine.ScheduleOnce("carol", "Carol Job", "Msg", execTime.Add(time.Minute), nil)

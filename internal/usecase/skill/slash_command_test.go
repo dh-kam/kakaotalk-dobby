@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,7 +281,9 @@ func TestSlashCommand_DefaultCommands(t *testing.T) {
 	assert.Contains(t, alarmCancelResp.Template.Outputs[0].SimpleText.Text, "모두 취소되었습니다")
 
 	// 12. /data list
-	dataListResp := reg.Execute(baseCtx("data", "list"))
+	dataListCtx := baseCtx("data", "list", "test-admin-token")
+	dataListCtx.AdminToken = "test-admin-token"
+	dataListResp := reg.Execute(dataListCtx)
 	require.NotNil(t, dataListResp)
 	dataListText := dataListResp.Template.Outputs[0].SimpleText.Text
 	assert.Contains(t, dataListText, "등록된 데이터 카탈로그")
@@ -290,7 +291,9 @@ func TestSlashCommand_DefaultCommands(t *testing.T) {
 	assert.Contains(t, dataListText, "school.json")
 
 	// 13. /data reload
-	dataReloadResp := reg.Execute(baseCtx("data", "reload"))
+	dataReloadCtx := baseCtx("data", "reload", "test-admin-token")
+	dataReloadCtx.AdminToken = "test-admin-token"
+	dataReloadResp := reg.Execute(dataReloadCtx)
 	require.NotNil(t, dataReloadResp)
 	assert.Contains(t, dataReloadResp.Template.Outputs[0].SimpleText.Text, "데이터 디렉토리 핫리로드 완료")
 
@@ -353,6 +356,7 @@ func TestSlashCommand_EndToEndHTTPServer(t *testing.T) {
 	uc := NewSkillServeUseCase()
 	go func() {
 		_ = uc.Execute(t.Context(), SkillServeRequest{
+			SkillToken: testSkillToken,
 			ListenAddr: addr,
 			ChannelID:  "0xc0de1ab",
 			AIProvider: ai.NewMockProvider("mock-provider"),
@@ -374,7 +378,7 @@ func TestSlashCommand_EndToEndHTTPServer(t *testing.T) {
 			},
 		}
 		bodyBytes, _ := json.Marshal(payload)
-		resp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(bodyBytes))
+		resp, err := postSkillRequest(t, "http://"+addr+"/skill", bytes.NewReader(bodyBytes))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -447,10 +451,10 @@ func TestSlashCommand_DataAdminGate(t *testing.T) {
 		})
 	}
 
-	// Dev mode (no token configured) stays open.
+	// Missing configuration must deny access just like the HTTP admin API.
 	resp := execute("", "list")
 	require.NotNil(t, resp)
-	assert.Contains(t, extractResponseText(resp), "데이터 카탈로그")
+	assert.Contains(t, extractResponseText(resp), "관리자 인증이 필요합니다")
 
 	// Configured token without/wrong argument is denied.
 	resp = execute("secret-token", "list")

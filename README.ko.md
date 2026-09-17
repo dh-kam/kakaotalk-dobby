@@ -118,6 +118,9 @@ KAKAO_REST_API_KEY=your_rest_api_key
 KAKAO_CLIENT_SECRET=your_client_secret
 KAKAO_REDIRECT_URI=http://localhost:8080/callback
 
+# 필수: 스킬 요청 인증용으로 별도의 긴 무작위 문자열을 설정합니다.
+KAKAO_SKILL_TOKEN=replace_with_a_long_random_secret
+
 # AI Provider 설정 (Vertex AI / Gemini)
 AI_PROVIDER=gemini
 VERTEX_PROJECT=your-gcp-project-id
@@ -131,11 +134,32 @@ AWS_BEARER_TOKEN_BEDROCK=your_bedrock_token
 
 ### 3. 로컬 빌드 및 실행
 
+카카오 관리자센터의 스킬 설정에서 ‘헤더값 입력’과 ‘테스트 헤더값 입력’에
+`X-Skill-Token`을 추가하고 서버의 `KAKAO_SKILL_TOKEN`과 같은 값을 넣습니다.
+헤더 설정은 [카카오 공식 안내](https://kakaobusiness.gitbook.io/main/tool/chatbot/skill_guide/make_skill)를
+참고하세요. 이 값은 사용자 ID를 전달하는 발신자를 인증하므로 서버 설정과
+관리자센터에서만 관리합니다.
+
+`skill serve`는 로컬 실행에서도 `KAKAO_SKILL_TOKEN` 또는 `--skill-token`이
+필수입니다. `/skill`, `/api/skill`은 본문을 처리하기 전에 인증을 확인합니다.
+`Authorization: Bearer <스킬토큰>`도 지원하며 `/healthz`는 인증 없이 호출할 수
+있습니다. 사용자 ID는 빈 값, `*`, `anonymous`를 허용하지 않고 대소문자를 구분합니다.
+
+`KAKAO_ADMIN_TOKEN`은 별도의 선택 설정입니다. 없으면 관리 HTTP API와 `/data`
+명령이 모두 비활성화됩니다. 관리자 명령은 별칭과 인증 실패를 포함해 대화 기록에서
+제외하며, 요청 로그에는 사용자 발화 원문을 남기지 않습니다.
+
+콜백은 `kakao.com`, `kakaowork.com`, `daum.net`, `0xc0de1ab.dev` 및 해당 하위
+도메인의 HTTPS 443 포트만 허용합니다. 루프백·사설 IP로 해석되는 주소와 리다이렉트는
+차단합니다. 콜백 처리 시간은 기본·최대 50초이고, 결과 전송에는 별도 5초를 확보합니다.
+로컬 테스트는 전송 객체를 대체하며 운영용 localhost 허용 옵션은 제공하지 않습니다.
+
 ```bash
 # 바이너리 빌드
 make
 
 # 카카오 오픈빌더 스킬 웹훅 서버 실행
+# 먼저 .env 또는 환경변수에 KAKAO_SKILL_TOKEN을 설정합니다.
 ./build/linux-amd64/debug/kakaobot skill serve --listen :8080
 ```
 

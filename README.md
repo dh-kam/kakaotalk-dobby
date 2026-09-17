@@ -116,6 +116,9 @@ KAKAO_REST_API_KEY=your_rest_api_key
 KAKAO_CLIENT_SECRET=your_client_secret
 KAKAO_REDIRECT_URI=http://localhost:8080/callback
 
+# Required for inbound skill requests; use an independent random secret.
+KAKAO_SKILL_TOKEN=replace_with_a_long_random_secret
+
 # AI Provider Settings (Vertex AI / Gemini)
 AI_PROVIDER=gemini
 VERTEX_PROJECT=your-gcp-project-id
@@ -129,11 +132,34 @@ AWS_BEARER_TOKEN_BEDROCK=your_bedrock_token
 
 ### 3. Build & Run Locally
 
+Configure `X-Skill-Token` with the same secret in both the skill and test headers
+in Kakao OpenBuilder. The [official skill setup guide](https://kakaobusiness.gitbook.io/main/tool/chatbot/skill_guide/make_skill)
+describes custom headers. Keep this secret in server configuration and the
+OpenBuilder console; it authenticates the sender of user identities.
+
+`skill serve` requires `KAKAO_SKILL_TOKEN` (or `--skill-token`) even on loopback.
+Both `/skill` and `/api/skill` reject missing or invalid authentication before
+processing the body. `Authorization: Bearer <skill-token>` is also supported.
+`/healthz` remains available without authentication. User IDs must be nonempty,
+must not be `*` or `anonymous`, and are matched case-sensitively.
+
+`KAKAO_ADMIN_TOKEN` is a separate, optional credential. When absent, both the
+administrative HTTP APIs and `/data` commands are disabled. Administrative
+commands, including aliases and failed attempts, are excluded from conversation
+history; incoming utterances are not written to request logs.
+
+Callback delivery accepts HTTPS on port 443 for `kakao.com`, `kakaowork.com`,
+`daum.net`, `0xc0de1ab.dev` and their subdomains. Loopback/private DNS answers and
+redirects are rejected. Callback processing defaults to 50 seconds (the maximum)
+and delivery has a separate 5-second budget. Local tests replace the delivery
+transport without enabling a production localhost exception.
+
 ```bash
 # Build the binary
 make
 
 # Run the OpenBuilder Chatbot Skill Webhook Server
+# KAKAO_SKILL_TOKEN must be configured in .env or the environment first.
 ./build/linux-amd64/debug/kakaobot skill serve --listen :8080
 ```
 

@@ -41,6 +41,7 @@ type SkillServeRequest struct {
 	SystemPrompt           string
 	DataDir                string
 	AdminToken             string
+	SkillToken             string
 	SlashRegistry          *SlashCommandRegistry
 	CallbackEnabled        bool
 	CallbackWaitingMessage string
@@ -108,7 +109,10 @@ func (m *userLockManager) tryLock(ctx context.Context, userID string, waitDurati
 }
 
 // SkillServeUseCase runs the HTTP skill webhook server with AI integration.
-type SkillServeUseCase struct{}
+type SkillServeUseCase struct {
+	// Tests can replace delivery transport without relaxing URL validation.
+	callbackHTTPClient *http.Client
+}
 
 func NewSkillServeUseCase() *SkillServeUseCase {
 	return &SkillServeUseCase{}
@@ -133,6 +137,9 @@ func (s *safeWriter) Write(p []byte) (n int, err error) {
 }
 
 func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest) error {
+	if err := ValidateServeOptions(req.SkillToken, req.CallbackProcessingTime); err != nil {
+		return err
+	}
 	var out io.Writer = req.Out
 	if out == nil {
 		out = os.Stdout
@@ -159,6 +166,9 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 
 	cb := newCallbackConfig(req.CallbackEnabled, req.CallbackWaitingMessage, req.CallbackProcessingTime)
+	if uc.callbackHTTPClient != nil {
+		cb.HTTPClient = uc.callbackHTTPClient
+	}
 
 	mux := http.NewServeMux()
 
@@ -170,6 +180,10 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !checkTokenAuth(r, "X-Skill-Token", req.SkillToken) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -194,11 +208,14 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 		}
 
 		userID := payload.UserRequest.User.ID
-		if userID == "" {
-			userID = "anonymous"
+		if userID == "" || userID != strings.TrimSpace(userID) || userID == "*" || strings.EqualFold(userID, "anonymous") {
+			http.Error(w, "Valid user ID required", http.StatusBadRequest)
+			return
 		}
 
-		fmt.Fprintf(out, "[Skill Request] User: %s | Message: %q\n", userID, utterance)
+		// Utterances may contain administrative credentials. Log only routing
+		// metadata; sensitive command arguments must never reach the log sink.
+		fmt.Fprintf(out, "[Skill Request] User: %q\n", userID)
 
 		// Callback API path: acknowledge immediately, answer asynchronously
 		// under an extended budget instead of the Kakao 5.0s SLA.
@@ -240,6 +257,10 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	mux.HandleFunc("/api/notify", notifyHandler)
 	mux.HandleFunc("/api/message/bots", newBotsListHandler(req.KakaoRegistry, req.AdminToken))
 
+	mux.HandleFunc("/api/schedules", newScheduleHandler(req.Scheduler, req.AdminToken))
+	mux.HandleFunc("/api/bots/status", newBotsStatusHandler(req.KakaoRegistry, req.AdminToken))
+	mux.HandleFunc("/api/agent/chat", newChatSimulateHandler(req.ChannelID, req.DataDir, req.AdminToken, req.BusService, req.SchoolService, req.Scheduler, req.Agent, req.AIProvider, sessionStore, req.SystemPrompt, slashRegistry))
+
 	server := &http.Server{
 		Addr:              req.ListenAddr,
 		Handler:           mux,
@@ -250,10 +271,13 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	}
 
 	fmt.Fprintf(out, "🚀 Kakao i OpenBuilder Skill Server is running on %s\n", req.ListenAddr)
-	fmt.Fprintf(out, "  - Skill URL:   http://%s/skill (or /api/skill)\n", req.ListenAddr)
-	fmt.Fprintf(out, "  - Message API: http://%s/api/message/send (POST, admin auth)\n", req.ListenAddr)
-	fmt.Fprintf(out, "  - Bots API:    http://%s/api/message/bots (GET, admin auth)\n", req.ListenAddr)
-	fmt.Fprintf(out, "  - Health check: http://%s/healthz\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Skill URL:     http://%s/skill (or /api/skill)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Message API:   http://%s/api/message/send (POST, admin auth)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Bots API:      http://%s/api/message/bots (GET, admin auth)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Schedules API: http://%s/api/schedules (GET, POST, DELETE, admin auth)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Bot Status:    http://%s/api/bots/status (GET, admin auth)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Chat Sim API:  http://%s/api/agent/chat (POST, admin auth)\n", req.ListenAddr)
+	fmt.Fprintf(out, "  - Health check:  http://%s/healthz\n", req.ListenAddr)
 	fmt.Fprintf(out, "  - Channel ID:   @%s\n", req.ChannelID)
 	if cb.Enabled {
 		fmt.Fprintf(out, "  - Callback API: Enabled (%s processing budget)\n", cb.ProcessingTime)
@@ -278,7 +302,7 @@ func (uc *SkillServeUseCase) Execute(ctx context.Context, req SkillServeRequest)
 	if req.AdminToken != "" {
 		fmt.Fprintf(out, "  - Admin API:   Active (token auth required)\n")
 	} else {
-		fmt.Fprintf(out, "  - Admin API:   Active (open/dev mode)\n")
+		fmt.Fprintf(out, "  - Admin API:   Disabled (no admin token configured)\n")
 	}
 	fmt.Fprintf(out, "    • Upload:    POST http://%s/api/data/upload\n", req.ListenAddr)
 	fmt.Fprintf(out, "    • Reload:    POST http://%s/api/data/reload\n", req.ListenAddr)
@@ -314,7 +338,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID, dataDir
 			slashRegistry = GetDefaultSlashCommandRegistry()
 		}
 		cmdName, args := parseSlashCommand(utterance)
-		if _, found := slashRegistry.Find(cmdName); found {
+		if spec, found := slashRegistry.Find(cmdName); found {
 			cmdCtx := &CommandContext{
 				Ctx:          ctx,
 				RawText:      utterance,
@@ -330,8 +354,13 @@ func processUtterance(ctx context.Context, utterance, userID, channelID, dataDir
 				SessionStore: sessionStore,
 			}
 			if resp := slashRegistry.Execute(cmdCtx); resp != nil {
-				appendFastPathTurn(sessionStore, userID, utterance, resp)
+				if !spec.Sensitive {
+					appendFastPathTurn(sessionStore, userID, utterance, resp)
+				}
 				return resp
+			}
+			if spec.Sensitive {
+				return openbuilder.NewSimpleTextResponse("관리자 명령을 처리하지 못했습니다.")
 			}
 		}
 	}
@@ -497,9 +526,6 @@ func processUtterance(ctx context.Context, utterance, userID, channelID, dataDir
 		// Reserve at least 800ms for fallback + serialization + transmission
 		if remaining > 1100*time.Millisecond {
 			agentTimeout = remaining - 800*time.Millisecond
-			if agentTimeout > 3000*time.Millisecond {
-				agentTimeout = 3000 * time.Millisecond
-			}
 		} else if remaining > 400*time.Millisecond {
 			agentTimeout = remaining - 200*time.Millisecond
 		} else {
@@ -513,7 +539,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID, dataDir
 		agentCancel()
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for utterance %q: %v\n", utterance, err)
+			fmt.Fprintf(os.Stderr, "⚠️ [Skill] Agent error for user %q: %v\n", userID, err)
 		} else if agentRes != nil && strings.TrimSpace(agentRes.Output) != "" {
 			cleanText := cleanAndFormatOutput(agentRes.Output)
 			if sessionStore != nil {
@@ -559,7 +585,7 @@ func processUtterance(ctx context.Context, utterance, userID, channelID, dataDir
 			Messages: chatMsgs,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for utterance %q: %v\n", utterance, err)
+			fmt.Fprintf(os.Stderr, "⚠️ [Skill] AI fallback error for user %q: %v\n", userID, err)
 		} else if aiResp != nil && strings.TrimSpace(aiResp.Text) != "" {
 			cleanText := cleanAndFormatOutput(aiResp.Text)
 			if sessionStore != nil {

@@ -8,6 +8,10 @@ import (
 )
 
 func TestResolveAIKey(t *testing.T) {
+	// Assertions must never read (or print) a developer's real credentials.
+	for _, name := range []string{"AI_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "VERTEX_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY"} {
+		t.Setenv(name, "")
+	}
 	t.Run("explicit AI_API_KEY wins", func(t *testing.T) {
 		t.Setenv("AI_API_KEY", "direct")
 		t.Setenv("XAI_API_KEY", "xai-key")

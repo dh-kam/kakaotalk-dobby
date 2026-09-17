@@ -1,0 +1,202 @@
+@import "tailwindcss/theme";
+@import "tailwindcss/utilities";
+
+.dobby-shell {
+  --bg-canvas: #EFF0F3;
+  --surface: #FFFFFF;
+  --surface-hover: #F8F9FA;
+  --border: #EAECF0;
+  --border-subtle: #F0F2F5;
+  --fg: #111827;
+  --text-main: #111827;
+  --text-muted: #6B7280;
+  --text-faint: #9CA3AF;
+  --accent: #111827;
+  --accent-hover: #1F2937;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #F1F3F5;
+  --accent-border: #E5E7EB;
+  --accent-glow: 0 2px 8px rgba(17, 24, 39, 0.12);
+  --amber-badge: #FEF3C7;
+  --amber-badge-fg: #92400E;
+  --amber-badge-border: #FDE68A;
+  --ok: #16A34A;
+  --ok-soft: #E6F4EA;
+  --ok-fg: #137333;
+  --warn: #D97706;
+  --warn-soft: #FEF3C7;
+  --bad: #DC2626;
+  --bad-soft: #FCE8E6;
+  --radius: 18px;
+  --radius-sm: 10px;
+  --radius-btn: 12px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  font-family: "Plus Jakarta Sans", "Noto Sans KR", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text-main);
+  line-height: 1.45;
+  letter-spacing: -0.011em;
+}
+
+.dobby-shell * {
+  box-sizing: border-box;
+}
+
+.dobby-shell button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Dashboard styled card */
+.dobby-shell .dash-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Dashboard native button classes matching /workspace/dashboard/web/css/app.css */
+.dobby-shell .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0 1.1rem;
+  border-radius: var(--radius-btn);
+  border: 1px solid var(--border);
+  background: #FFFFFF;
+  color: var(--fg);
+  cursor: pointer;
+  text-decoration: none;
+  font-size: .84rem;
+  font-weight: 600;
+  box-shadow: none;
+  transition: all .15s ease;
+  white-space: nowrap;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.dobby-shell .btn svg {
+  flex-shrink: 0;
+}
+
+.dobby-shell .btn:hover:not(:disabled) {
+  background: #F9FAFB;
+  text-decoration: none;
+  border-color: #D1D5DB;
+  color: var(--fg);
+}
+
+.dobby-shell .btn:disabled,
+.dobby-shell .btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.dobby-shell .btn-primary {
+  background: #111827 !important;
+  color: #FFFFFF !important;
+  border-color: #111827 !important;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.dobby-shell .btn-primary svg {
+  color: #FFFFFF !important;
+  stroke: #FFFFFF !important;
+}
+
+.dobby-shell .btn-primary:hover:not(:disabled) {
+  background: #1F2937 !important;
+  border-color: #1F2937 !important;
+  color: #FFFFFF !important;
+}
+
+.dobby-shell .btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.dobby-shell .btn-ghost:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--fg);
+}
+
+/* Dashboard filter pill style */
+.dobby-shell .filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .35rem .85rem;
+  font-size: .78rem;
+  font-weight: 650;
+  color: #4B5563;
+  cursor: pointer;
+  box-shadow: none;
+  transition: all .15s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.dobby-shell .filter-pill svg {
+  width: .85rem;
+  height: .85rem;
+  stroke: currentColor;
+}
+
+.dobby-shell .filter-pill:hover:not(:disabled) {
+  background: #F9FAFB;
+  border-color: #D1D5DB;
+  color: #111827;
+}
+
+.dobby-shell .filter-pill.is-active {
+  background: #111827 !important;
+  border-color: #111827 !important;
+  color: #FFFFFF !important;
+}
+
+/* Input style */
+.dobby-shell input[type="text"],
+.dobby-shell input[type="number"],
+.dobby-shell select,
+.dobby-shell textarea,
+.dobby-shell .dash-input {
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  color: var(--text-main);
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.dobby-shell input[type="text"]:focus,
+.dobby-shell input[type="number"]:focus,
+.dobby-shell select:focus,
+.dobby-shell textarea:focus,
+.dobby-shell .dash-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Custom scrollbar matching dashboard */
+.dobby-shell ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.dobby-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dobby-shell ::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+  border-radius: 3px;
+}
+.dobby-shell ::-webkit-scrollbar-thumb:hover {
+  background: #9CA3AF;
+}

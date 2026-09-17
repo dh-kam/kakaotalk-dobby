@@ -36,6 +36,9 @@ type Job struct {
 	LastFiredAt *time.Time        `json:"last_fired_at,omitempty"`
 	Status      JobStatus         `json:"status"`
 	Payload     map[string]string `json:"payload,omitempty"`
+	// Revision changes when execution is cancelled or rescheduled, so an old
+	// trigger or in-flight delivery cannot complete a newer schedule.
+	Revision uint64 `json:"revision,omitempty"`
 }
 
 // Clone returns a deep copy of Job.

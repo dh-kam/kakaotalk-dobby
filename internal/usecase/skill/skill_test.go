@@ -3,6 +3,7 @@ package skill
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -14,6 +15,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const testSkillToken = "test-only-skill-secret"
+
+func postSkillRequest(t *testing.T, url string, body io.Reader) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skill-Token", testSkillToken)
+	return http.DefaultClient.Do(req)
+}
 
 func waitForServer(t *testing.T, url string) {
 	t.Helper()
@@ -43,6 +55,7 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 	uc := NewSkillServeUseCase()
 	go func() {
 		_ = uc.Execute(t.Context(), SkillServeRequest{
+			SkillToken:    testSkillToken,
 			ListenAddr:    addr,
 			ChannelID:     "0xc0de1ab",
 			AIProvider:    ai.NewMockProvider("mock-llm"),
@@ -65,7 +78,7 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 	}
 	body, _ := json.Marshal(reqPayload)
 
-	postResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(body))
+	postResp, err := postSkillRequest(t, "http://"+addr+"/skill", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer postResp.Body.Close()
 
@@ -89,7 +102,7 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 	}
 	aiBody, _ := json.Marshal(aiReqPayload)
 
-	aiPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(aiBody))
+	aiPostResp, err := postSkillRequest(t, "http://"+addr+"/skill", bytes.NewReader(aiBody))
 	require.NoError(t, err)
 	defer aiPostResp.Body.Close()
 
@@ -112,7 +125,7 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 		},
 	}
 	resetBody, _ := json.Marshal(resetPayload)
-	resetPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(resetBody))
+	resetPostResp, err := postSkillRequest(t, "http://"+addr+"/skill", bytes.NewReader(resetBody))
 	require.NoError(t, err)
 	defer resetPostResp.Body.Close()
 
@@ -131,7 +144,7 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 		},
 	}
 	schoolBody, _ := json.Marshal(schoolPayload)
-	schoolPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(schoolBody))
+	schoolPostResp, err := postSkillRequest(t, "http://"+addr+"/skill", bytes.NewReader(schoolBody))
 	require.NoError(t, err)
 	defer schoolPostResp.Body.Close()
 
@@ -151,7 +164,7 @@ func TestSkillServer_ProcessUtterance(t *testing.T) {
 		},
 	}
 	busBody, _ := json.Marshal(busPayload)
-	busPostResp, err := http.Post("http://"+addr+"/skill", "application/json", bytes.NewReader(busBody))
+	busPostResp, err := postSkillRequest(t, "http://"+addr+"/skill", bytes.NewReader(busBody))
 	require.NoError(t, err)
 	defer busPostResp.Body.Close()
 
