@@ -85,7 +85,7 @@ func (uc *NotifyUseCase) Send(ctx context.Context, req SendMessageRequest) (*Sen
 			if err := client.Memo().SendCustom(ctx, req.TemplateID, req.TemplateArgs); err != nil {
 				return nil, fmt.Errorf("send custom memo message: %w", err)
 			}
-		} else if msgType == MessageTypeFeed || req.Title != "" || req.ImageURL != "" {
+		} else if msgType == MessageTypeFeed {
 			feed := kakao.NewFeedTemplate(req.Title, req.Description, req.ImageURL, req.WebURL, req.ButtonTitle)
 			if err := client.Memo().SendFeed(ctx, *feed); err != nil {
 				return nil, fmt.Errorf("send feed memo message: %w", err)
@@ -116,7 +116,7 @@ func (uc *NotifyUseCase) Send(ctx context.Context, req SendMessageRequest) (*Sen
 		var result *kakao.MessageResult
 		if req.TemplateID > 0 {
 			result, err = client.Friends().SendCustom(ctx, req.ReceiverUUIDs, req.TemplateID, req.TemplateArgs)
-		} else if msgType == MessageTypeFeed || req.Title != "" || req.ImageURL != "" {
+		} else if msgType == MessageTypeFeed {
 			feed := kakao.NewFeedTemplate(req.Title, req.Description, req.ImageURL, req.WebURL, req.ButtonTitle)
 			result, err = client.Friends().SendFeed(ctx, req.ReceiverUUIDs, *feed)
 		} else {
