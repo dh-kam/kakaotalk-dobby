@@ -34,6 +34,7 @@ func newFriendsListCommand(ctx context.Context) *cobra.Command {
 		TokenPath    string `flag:"token-path" usage:"Path to token JSON file"`
 		Offset       int    `flag:"offset" usage:"Pagination offset"`
 		Limit        int    `flag:"limit" usage:"Number of friends to retrieve (max 100)"`
+		Raw          bool   `flag:"raw" usage:"Output raw markdown instead of glamour-styled terminal view"`
 	}{}
 
 	binder := flagsbinder.NewViperCobraFlagsBinder().
@@ -42,7 +43,8 @@ func newFriendsListCommand(ctx context.Context) *cobra.Command {
 		StringP("redirect-uri", "r", cfg.RedirectURI, "Kakao OAuth Redirect URI").
 		StringP("token-path", "t", cfg.TokenPath, "Path to token JSON file").
 		IntP("offset", "o", 0, "Pagination offset").
-		IntP("limit", "l", 10, "Number of friends to retrieve (max 100)")
+		IntP("limit", "l", 10, "Number of friends to retrieve (max 100)").
+		Bool("raw", false, "Output raw markdown instead of glamour-styled terminal view")
 
 	cmd := &cobra.Command{
 		Use:           "list",
@@ -64,6 +66,7 @@ func newFriendsListCommand(ctx context.Context) *cobra.Command {
 				TokenPath:    opts.TokenPath,
 				Offset:       opts.Offset,
 				Limit:        opts.Limit,
+				RawMarkdown:  opts.Raw,
 				Out:          cmd.OutOrStdout(),
 			})
 		},

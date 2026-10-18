@@ -23,8 +23,8 @@ func TestFriendsListCommand_PreRunE(t *testing.T) {
 	cmd := newFriendsListCommand(context.Background())
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--limit", "5"})
+	cmd.SetArgs([]string{"--limit", "5", "--raw"})
 
-	err := cmd.PreRunE(cmd, []string{"--limit", "5"})
+	err := cmd.PreRunE(cmd, []string{"--limit", "5", "--raw"})
 	assert.NoError(t, err)
 }
