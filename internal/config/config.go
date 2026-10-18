@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dh-kam/kakaotalk-dobby/pkg/ai"
@@ -50,6 +51,9 @@ type AppConfig struct {
 	STTFallbackLocal      bool
 	LocalWhisperModelPath string
 	LocalWhisperBinPath   string
+
+	FriendsMapPath        string
+	FriendsAlertStatePath string
 }
 
 // resolveAIKey picks the API key matching the requested provider first, so an
@@ -159,6 +163,15 @@ func Load() *AppConfig {
 		STTFallbackLocal:      strings.EqualFold(os.Getenv("STT_ENABLE_FALLBACK"), "true") || os.Getenv("STT_ENABLE_FALLBACK") == "1",
 		LocalWhisperModelPath: os.Getenv("WHISPER_MODEL_PATH"),
 		LocalWhisperBinPath:   os.Getenv("WHISPER_BIN_PATH"),
+		FriendsMapPath:        os.Getenv("KAKAO_FRIENDS_MAP_PATH"),
+		FriendsAlertStatePath: os.Getenv("KAKAO_FRIENDS_ALERT_STATE_PATH"),
+	}
+
+	if cfg.FriendsMapPath == "" {
+		cfg.FriendsMapPath = defaultFriendsMapPath()
+	}
+	if cfg.FriendsAlertStatePath == "" {
+		cfg.FriendsAlertStatePath = defaultFriendsAlertStatePath()
 	}
 
 	if cfg.RedirectURI == "" {
@@ -396,4 +409,20 @@ func getAdminToken() string {
 		return t
 	}
 	return os.Getenv("ADMIN_TOKEN")
+}
+
+func defaultFriendsMapPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "friends_map.json"
+	}
+	return filepath.Join(home, ".config", "kakao-bot", "friends_map.json")
+}
+
+func defaultFriendsAlertStatePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "friends_alert_state.json"
+	}
+	return filepath.Join(home, ".config", "kakao-bot", "friends_alert_state.json")
 }

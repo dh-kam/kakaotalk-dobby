@@ -12,21 +12,23 @@ import (
 
 // ListFriendsRequest holds options for querying friend list.
 type ListFriendsRequest struct {
-	ClientID     string
-	ClientSecret string
-	RedirectURI  string
-	TokenPath    string
-	Offset       int
-	Limit        int
-	RawMarkdown  bool
-	Out          io.Writer
+	ClientID       string
+	ClientSecret   string
+	RedirectURI    string
+	TokenPath      string
+	FriendsMapPath string
+	Offset         int
+	Limit          int
+	RawMarkdown    bool
+	Out            io.Writer
 }
 
-// ListFriendsUseCase retrieves and displays Kakao friends.
+// ListFriendsUseCase retrieves and displays Kakao friends with mapped identities.
 type ListFriendsUseCase struct {
 	presenter *FriendsPresenter
 }
 
+// NewListFriendsUseCase creates a new ListFriendsUseCase instance.
 func NewListFriendsUseCase() *ListFriendsUseCase {
 	return &ListFriendsUseCase{
 		presenter: NewFriendsPresenter(),
@@ -69,7 +71,10 @@ func (uc *ListFriendsUseCase) Execute(ctx context.Context, req ListFriendsReques
 		saInfo.Scope = token.Scope
 	}
 
-	// 2. Retrieve KakaoTalk Friends
+	// 2. Load Friends Directory for email & role mapping
+	directory := NewFileFriendDirectory(req.FriendsMapPath)
+
+	// 3. Retrieve KakaoTalk Friends
 	friendsResp, err := client.Friends().GetFriends(ctx, kakao.FriendsQueryOptions{
 		Offset: req.Offset,
 		Limit:  req.Limit,
@@ -79,12 +84,26 @@ func (uc *ListFriendsUseCase) Execute(ctx context.Context, req ListFriendsReques
 	}
 
 	friendViews := lo.Map(friendsResp.Elements, func(friend kakao.Friend, idx int) FriendItemView {
+		mapping, isRegistered := directory.FindByUUID(friend.UUID)
+		email := ""
+		mappedName := ""
+		isAdmin := false
+		if isRegistered && mapping != nil {
+			email = mapping.Email
+			mappedName = mapping.Name
+			isAdmin = mapping.IsAdmin
+		}
+
 		return FriendItemView{
-			Index:       idx + 1 + req.Offset,
-			UUID:        friend.UUID,
-			Nickname:    friend.ProfileNickname,
-			Messageable: friend.AllowedMsg,
-			Favorite:    friend.Favorite,
+			Index:        idx + 1 + req.Offset,
+			UUID:         friend.UUID,
+			Nickname:     friend.ProfileNickname,
+			Email:        email,
+			MappedName:   mappedName,
+			IsAdmin:      isAdmin,
+			IsRegistered: isRegistered,
+			Messageable:  friend.AllowedMsg,
+			Favorite:     friend.Favorite,
 		}
 	})
 

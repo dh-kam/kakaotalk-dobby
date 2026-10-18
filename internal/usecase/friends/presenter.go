@@ -22,11 +22,15 @@ type ServiceAccountInfo struct {
 
 // FriendItemView encapsulates display data for a friend item.
 type FriendItemView struct {
-	Index       int
-	UUID        string
-	Nickname    string
-	Messageable bool
-	Favorite    bool
+	Index        int
+	UUID         string
+	Nickname     string
+	Email        string
+	MappedName   string
+	IsAdmin      bool
+	IsRegistered bool
+	Messageable  bool
+	Favorite     bool
 }
 
 // FriendsViewData contains all data required to render the friends and service account view.
@@ -86,30 +90,55 @@ func (p *FriendsPresenter) BuildMarkdown(data FriendsViewData) string {
 	}
 
 	sb.WriteString(fmt.Sprintf("### 👥 Authorized Friends (%d / Total %d)\n\n", len(data.Friends), data.TotalCount))
-	sb.WriteString("| # | Nickname | Status | Receiver UUID |\n")
-	sb.WriteString("| :-: | :--- | :-: | :--- |\n")
+	sb.WriteString("| # | Nickname | Email | Status | Receiver UUID |\n")
+	sb.WriteString("| :-: | :--- | :--- | :-: | :--- |\n")
 
+	unregisteredCount := 0
 	lo.ForEach(data.Friends, func(f FriendItemView, _ int) {
 		msgStatus := "❌ No"
 		if f.Messageable {
 			msgStatus = "✅ Yes"
 		}
+
 		nickname := f.Nickname
-		if f.Favorite {
-			nickname = fmt.Sprintf("%s ⭐", f.Nickname)
+		if f.MappedName != "" && f.MappedName != f.Nickname {
+			nickname = fmt.Sprintf("%s (%s)", f.Nickname, f.MappedName)
 		}
-		sb.WriteString(fmt.Sprintf("| %d | **%s** | %s | `%s` |\n",
+		if f.IsAdmin {
+			nickname = fmt.Sprintf("%s 👑", nickname)
+		} else if f.Favorite {
+			nickname = fmt.Sprintf("%s ⭐", nickname)
+		}
+
+		email := f.Email
+		if email == "" {
+			if !f.IsRegistered {
+				email = "⚠️ 미등록"
+				unregisteredCount++
+			} else {
+				email = "-"
+			}
+		} else {
+			email = fmt.Sprintf("`%s`", email)
+		}
+
+		sb.WriteString(fmt.Sprintf("| %d | **%s** | %s | %s | `%s` |\n",
 			f.Index,
 			nickname,
+			email,
 			msgStatus,
 			f.UUID,
 		))
 	})
 
+	if unregisteredCount > 0 {
+		sb.WriteString(fmt.Sprintf("\n> 🚨 **보안 주의**: 등록되지 않은 미승인 친구(%d명)가 감지되었습니다. 화이트리스트(`friends_map.json`)를 점검하세요.\n", unregisteredCount))
+	}
+
 	return sb.String()
 }
 
-// getTerminalWidth dynamically detects terminal column width from out, falling back to 100.
+// getTerminalWidth dynamically detects terminal column width from out, falling back to 110.
 func getTerminalWidth(out io.Writer) int {
 	type fileDescriptor interface {
 		Fd() uintptr
@@ -119,11 +148,11 @@ func getTerminalWidth(out io.Writer) int {
 		if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
 			// Clamp to safe word wrap width:
 			// Subtract 4 columns to avoid edge overflows on narrow or split panes,
-			// and bound between 70 and 110 for readable table proportions.
-			return lo.Clamp(w-4, 70, 110)
+			// and bound between 80 and 130 for readable table proportions.
+			return lo.Clamp(w-4, 80, 130)
 		}
 	}
-	return 100
+	return 110
 }
 
 // Render writes glamour-styled ANSI output (or raw markdown if requested) to out.

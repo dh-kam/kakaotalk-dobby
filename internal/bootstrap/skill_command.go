@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dh-kam/kakaotalk-dobby/internal/config"
+	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/friends"
 	"github.com/dh-kam/kakaotalk-dobby/internal/usecase/skill"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/academy"
 	"github.com/dh-kam/kakaotalk-dobby/pkg/agent"
@@ -147,6 +148,23 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 					return fmt.Errorf("start token keeper: %w", err)
 				}
 				defer tokenKeeper.Stop()
+			}
+
+			// Initialize Friend Watcher (periodic scan for unauthorized friends, check on start)
+			if kakaoClient != nil {
+				friendsDir := friends.NewFileFriendDirectory(runtimeCfg.FriendsMapPath)
+				friendWatcher := friends.NewFriendWatcher(friends.FriendWatcherConfig{
+					Client:         kakaoClient,
+					Directory:      friendsDir,
+					StatePath:      runtimeCfg.FriendsAlertStatePath,
+					Interval:       1 * time.Hour,
+					AlertOnUnknown: true,
+					Out:            cmd.OutOrStdout(),
+				})
+				if err := friendWatcher.Start(cmd.Context()); err != nil {
+					return fmt.Errorf("start friend watcher: %w", err)
+				}
+				defer friendWatcher.Stop()
 			}
 
 			// Initialize Agent if Vertex AI is configured (Bedrock remains available via the `agent` command)
