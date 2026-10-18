@@ -22,6 +22,15 @@ func setupNotifyTestKakaoServer(t *testing.T) *httptest.Server {
 		case "/v2/api/talk/memo/default/send", "/v2/api/talk/memo/send":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"result_code": 0}`))
+		case "/v1/api/talk/friends":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"elements": [
+					{"profile_nickname": "아빠", "uuid": "uuid-dad", "id": 111, "allowed_msg": true},
+					{"profile_nickname": "엄마", "uuid": "uuid-mom", "id": 222, "allowed_msg": true}
+				],
+				"total_count": 2
+			}`))
 		case "/v1/api/talk/friends/message/default/send", "/v1/api/talk/friends/message/send":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"successful_receiver_uuids": ["user-1"], "failure_info": []}`))
@@ -222,5 +231,37 @@ func TestBotsListAPI(t *testing.T) {
 		assert.True(t, result.Bots[0].IsDefault)
 		assert.Equal(t, "infra", result.Bots[1].Name)
 		assert.False(t, result.Bots[1].IsDefault)
+	})
+}
+
+func TestFriendsListAPI(t *testing.T) {
+	ts := setupNotifyTestKakaoServer(t)
+	defer ts.Close()
+
+	reg := createNotifyTestRegistry(ts.URL)
+	handler := newFriendsListHandler(reg, "secret-token")
+
+	t.Run("unauthorized access returns 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/friends", nil)
+		w := httptest.NewRecorder()
+		handler(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("authorized access returns friends list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/friends?bot=dobby", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		handler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result kakao.FriendsResponse
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.TotalCount)
+		require.Len(t, result.Elements, 2)
+		assert.Equal(t, "아빠", result.Elements[0].ProfileNickname)
+		assert.Equal(t, "uuid-dad", result.Elements[0].UUID)
+		assert.True(t, result.Elements[0].AllowedMsg)
 	})
 }

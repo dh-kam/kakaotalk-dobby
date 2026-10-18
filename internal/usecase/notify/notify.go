@@ -149,6 +149,112 @@ func (uc *NotifyUseCase) Send(ctx context.Context, req SendMessageRequest) (*Sen
 			},
 		}, nil
 
+	case TargetFamily:
+		var (
+			deliveredReceivers []string
+			failures           []kakao.FailureInfo
+			memoSuccess        bool
+			friendsSuccess     bool
+			lastErr            error
+		)
+
+		// 1. Send to self (memo)
+		if req.TemplateID > 0 {
+			if err := client.Memo().SendCustom(ctx, req.TemplateID, req.TemplateArgs); err != nil {
+				lastErr = err
+			} else {
+				memoSuccess = true
+				deliveredReceivers = append(deliveredReceivers, "me")
+			}
+		} else if msgType == MessageTypeFeed {
+			feed := kakao.NewFeedTemplate(req.Title, req.Description, req.ImageURL, req.WebURL, req.ButtonTitle)
+			if err := client.Memo().SendFeed(ctx, *feed); err != nil {
+				lastErr = err
+			} else {
+				memoSuccess = true
+				deliveredReceivers = append(deliveredReceivers, "me")
+			}
+		} else {
+			textReq := kakao.TextMessageRequest{
+				Text:        req.Text,
+				WebURL:      req.WebURL,
+				MobileURL:   req.MobileURL,
+				ButtonTitle: req.ButtonTitle,
+			}
+			if err := client.Memo().SendText(ctx, textReq); err != nil {
+				lastErr = err
+			} else {
+				memoSuccess = true
+				deliveredReceivers = append(deliveredReceivers, "me")
+			}
+		}
+
+		// 2. Resolve family friends UUIDs
+		uuids := req.ReceiverUUIDs
+		if len(uuids) == 0 {
+			resp, err := client.Friends().GetFriends(ctx, kakao.FriendsQueryOptions{Limit: 100})
+			if err == nil && resp != nil {
+				for _, f := range resp.Elements {
+					if f.AllowedMsg && strings.TrimSpace(f.UUID) != "" {
+						uuids = append(uuids, f.UUID)
+					}
+				}
+			}
+		}
+
+		// 3. Send to friends if any
+		if len(uuids) > 0 {
+			var result *kakao.MessageResult
+			if req.TemplateID > 0 {
+				result, err = client.Friends().SendCustom(ctx, uuids, req.TemplateID, req.TemplateArgs)
+			} else if msgType == MessageTypeFeed {
+				feed := kakao.NewFeedTemplate(req.Title, req.Description, req.ImageURL, req.WebURL, req.ButtonTitle)
+				result, err = client.Friends().SendFeed(ctx, uuids, *feed)
+			} else {
+				textReq := kakao.TextMessageRequest{
+					Text:        req.Text,
+					WebURL:      req.WebURL,
+					MobileURL:   req.MobileURL,
+					ButtonTitle: req.ButtonTitle,
+				}
+				result, err = client.Friends().SendText(ctx, uuids, textReq)
+			}
+
+			if err != nil {
+				lastErr = err
+			} else if result != nil {
+				deliveredReceivers = append(deliveredReceivers, result.SuccessfulReceiverUUIDs...)
+				failures = append(failures, result.FailureInfo...)
+				if len(result.SuccessfulReceiverUUIDs) > 0 {
+					friendsSuccess = true
+				}
+			}
+		}
+
+		totalDelivered := len(deliveredReceivers)
+		totalFailed := len(failures)
+		if !memoSuccess && lastErr != nil {
+			totalFailed++
+		}
+
+		if totalDelivered == 0 && lastErr != nil {
+			return nil, fmt.Errorf("family dispatch failed: %w", lastErr)
+		}
+
+		return &SendMessageResponse{
+			Success:        totalDelivered > 0,
+			Bot:            resolvedBot,
+			Target:         TargetFamily,
+			Type:           msgType,
+			Message:        fmt.Sprintf("Family message processed: %d delivered (self: %v, friends: %v), %d failed", totalDelivered, memoSuccess, friendsSuccess, totalFailed),
+			DeliveredCount: totalDelivered,
+			FailedCount:    totalFailed,
+			Details: &SendMessageDetails{
+				SuccessfulReceivers: deliveredReceivers,
+				Failures:            failures,
+			},
+		}, nil
+
 	case TargetChannel:
 		if uc.channelSender == nil {
 			return nil, errors.New("channel sender is not configured")

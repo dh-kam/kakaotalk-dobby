@@ -12,6 +12,7 @@ type TargetType string
 const (
 	TargetMemo    TargetType = "memo"    // Personal talk memo (나에게 보내기)
 	TargetFriends TargetType = "friends" // KakaoTalk friends (친구에게 보내기)
+	TargetFamily  TargetType = "family"  // Family broadcast (나 + 등록된 가족 친구들 전체)
 	TargetChannel TargetType = "channel" // KakaoTalk channel message (채널 메시지)
 )
 
@@ -70,6 +71,8 @@ func NormalizeTarget(raw TargetType) (TargetType, bool) {
 		return TargetMemo, true
 	case "friends", "friend":
 		return TargetFriends, true
+	case "family", "all":
+		return TargetFamily, true
 	case "channel":
 		return TargetChannel, true
 	default:

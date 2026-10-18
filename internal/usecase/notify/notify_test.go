@@ -20,6 +20,15 @@ func setupTestKakaoServer(t *testing.T) *httptest.Server {
 		case "/v2/api/talk/memo/default/send", "/v2/api/talk/memo/send":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"result_code": 0}`))
+		case "/v1/api/talk/friends":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"elements": [
+					{"profile_nickname": "아빠", "uuid": "uuid-1", "id": 111, "allowed_msg": true},
+					{"profile_nickname": "엄마", "uuid": "uuid-2", "id": 222, "allowed_msg": true}
+				],
+				"total_count": 2
+			}`))
 		case "/v1/api/talk/friends/message/default/send", "/v1/api/talk/friends/message/send":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{
@@ -189,6 +198,33 @@ func TestNotifyUseCase_FriendsSend(t *testing.T) {
 	assert.Equal(t, 0, res.FailedCount)
 	require.NotNil(t, res.Details)
 	assert.Equal(t, []string{"uuid-1", "uuid-2"}, res.Details.SuccessfulReceivers)
+}
+
+func TestNotifyUseCase_FamilySend(t *testing.T) {
+	ts := setupTestKakaoServer(t)
+	defer ts.Close()
+
+	client := createTestClient(ts.URL, "dobby")
+	reg := kakao.NewClientRegistry()
+	reg.Register("dobby", client, true)
+
+	uc := NewNotifyUseCase(reg, nil)
+	ctx := context.Background()
+
+	t.Run("family broadcast with auto resolved friends", func(t *testing.T) {
+		res, err := uc.Send(ctx, SendMessageRequest{
+			Bot:    "dobby",
+			Target: TargetFamily,
+			Text:   "Family announcement",
+		})
+		require.NoError(t, err)
+		assert.True(t, res.Success)
+		assert.Equal(t, TargetFamily, res.Target)
+		assert.Equal(t, 3, res.DeliveredCount) // 1 (self) + 2 (friends)
+		assert.Equal(t, 0, res.FailedCount)
+		require.NotNil(t, res.Details)
+		assert.Equal(t, []string{"me", "uuid-1", "uuid-2"}, res.Details.SuccessfulReceivers)
+	})
 }
 
 func TestNotifyUseCase_ChannelSend(t *testing.T) {

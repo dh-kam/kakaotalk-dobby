@@ -3,6 +3,7 @@ package skill
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -101,3 +102,45 @@ func newBotsListHandler(reg kakao.ClientRegistry, adminToken string) http.Handle
 		})
 	}
 }
+
+func newFriendsListHandler(reg kakao.ClientRegistry, adminToken string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if !checkAdminAuth(r, adminToken) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "unauthorized"})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if reg == nil {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"elements": []any{}, "total_count": 0})
+			return
+		}
+
+		botName := r.URL.Query().Get("bot")
+		client, err := reg.Get(botName)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+			return
+		}
+
+		friendsResp, err := client.Friends().GetFriends(r.Context(), kakao.FriendsQueryOptions{Limit: 100})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": fmt.Sprintf("failed to get friends: %v", err)})
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(friendsResp)
+	}
+}
+

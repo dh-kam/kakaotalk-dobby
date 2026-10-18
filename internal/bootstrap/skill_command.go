@@ -135,6 +135,20 @@ func newSkillServeCommand(ctx context.Context) *cobra.Command {
 			}
 			defer schedEngine.Stop()
 
+			// Initialize Token Keeper (periodic refresh every 24h, check on start)
+			if kakaoClient != nil || (kakaoRegistry != nil && kakaoRegistry.Count() > 0) {
+				tokenKeeper := kakao.NewTokenKeeper(kakao.TokenKeeperConfig{
+					Client:       kakaoClient,
+					Registry:     kakaoRegistry,
+					Interval:     24 * time.Hour,
+					CheckOnStart: true,
+				})
+				if err := tokenKeeper.Start(cmd.Context()); err != nil {
+					return fmt.Errorf("start token keeper: %w", err)
+				}
+				defer tokenKeeper.Stop()
+			}
+
 			// Initialize Agent if Vertex AI is configured (Bedrock remains available via the `agent` command)
 			var botAgent agent.Agent
 			if runtimeCfg.VertexAPIKey != "" {
