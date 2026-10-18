@@ -36,15 +36,36 @@ type defaultClient struct {
 	mu sync.Mutex
 }
 
+var (
+	defaultFriendGuardMu sync.RWMutex
+	defaultFriendGuard   FriendGuard
+)
+
+// SetDefaultFriendGuard sets the global default FriendGuard used when creating new clients.
+func SetDefaultFriendGuard(g FriendGuard) {
+	defaultFriendGuardMu.Lock()
+	defer defaultFriendGuardMu.Unlock()
+	defaultFriendGuard = g
+}
+
+// GetDefaultFriendGuard returns the global default FriendGuard.
+func GetDefaultFriendGuard() FriendGuard {
+	defaultFriendGuardMu.RLock()
+	defer defaultFriendGuardMu.RUnlock()
+	return defaultFriendGuard
+}
+
 // ClientConfig holds configuration for the Kakao client.
 type ClientConfig struct {
-	AuthBaseURL  string
-	APIBaseURL   string
-	ClientID     string
-	ClientSecret string
-	RedirectURI  string
-	TokenStore   TokenStore
-	HTTPClient   *http.Client
+	AuthBaseURL        string
+	APIBaseURL         string
+	ClientID           string
+	ClientSecret       string
+	RedirectURI        string
+	TokenStore         TokenStore
+	HTTPClient         *http.Client
+	FriendGuard        FriendGuard // Optional: interceptor for validating friend message dispatch
+	DisableFriendGuard bool        // If true, bypasses the FriendGuard (useful for alert senders)
 }
 
 // NewClient creates a new Client interface implementation.
@@ -76,10 +97,19 @@ func NewClient(cfg ClientConfig) Client {
 
 	tokenProvider := c.GetValidAccessToken
 
+	var guard FriendGuard
+	if !cfg.DisableFriendGuard {
+		if cfg.FriendGuard != nil {
+			guard = cfg.FriendGuard
+		} else {
+			guard = GetDefaultFriendGuard()
+		}
+	}
+
 	c.authService = NewAuthService(c.authBaseURL, c.apiBaseURL, c.clientID, c.clientSecret, c.redirectURI, c.httpClient, tokenProvider)
 	c.userService = NewUserService(c.apiBaseURL, c.httpClient, tokenProvider)
 	c.memoService = NewMemoService(c.apiBaseURL, c.httpClient, tokenProvider)
-	c.friendsService = NewFriendsService(c.apiBaseURL, c.httpClient, tokenProvider)
+	c.friendsService = NewFriendsService(c.apiBaseURL, c.httpClient, tokenProvider, guard)
 	c.storageService = NewStorageService(c.apiBaseURL, c.httpClient, tokenProvider)
 
 	return c

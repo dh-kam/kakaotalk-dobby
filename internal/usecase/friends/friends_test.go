@@ -53,8 +53,19 @@ func TestFriendsPresenter_BuildMarkdown_WithServiceAccountAndFriends(t *testing.
 				Messageable:  false,
 				Favorite:     false,
 			},
+			{
+				Index:        4,
+				UUID:         "UUID-4444",
+				Nickname:     "미인증친구",
+				Email:        "",
+				MappedName:   "친척",
+				IsAdmin:      false,
+				IsRegistered: true,
+				Messageable:  true,
+				Favorite:     false,
+			},
 		},
-		TotalCount: 3,
+		TotalCount: 4,
 	}
 
 	md := presenter.BuildMarkdown(data)
@@ -65,17 +76,20 @@ func TestFriendsPresenter_BuildMarkdown_WithServiceAccountAndFriends(t *testing.
 	assert.Contains(t, md, "- **Nickname**: Donghee Kam")
 	assert.Contains(t, md, "- **Email**: `donghee.kam@gmail.com`")
 	assert.Contains(t, md, "`talk_message`, `friends`, `profile_nickname`")
-	assert.Contains(t, md, "### 👥 Authorized Friends (3 / Total 3)")
+	assert.Contains(t, md, "### 👥 Authorized Friends (4 / Total 4)")
 	assert.Contains(t, md, "| # | Nickname | Email | Status | Receiver UUID |")
 	assert.Contains(t, md, "**감동희 (아빠 (감동희)) 👑**")
 	assert.Contains(t, md, "**감윤재 (아들 (감윤재)) ⭐**")
 	assert.Contains(t, md, "`inzero@hanmail.net`")
 	assert.Contains(t, md, "kamtoyun@gmail.com")
 	assert.Contains(t, md, "⚠️ 미등록")
+	assert.Contains(t, md, "⚠️ 미확인 (이메일 없음)")
 	assert.Contains(t, md, "✅ Yes")
 	assert.Contains(t, md, "❌ No")
 	assert.Contains(t, md, "UUID-1111")
+	assert.Contains(t, md, "UUID-4444")
 	assert.Contains(t, md, "🚨 **보안 주의**: 등록되지 않은 미승인 친구(1명)가 감지되었습니다.")
+	assert.Contains(t, md, "⚠️ **신원 확인 필요**: 이메일이 등록되지 않은 친구(1명)는 메시지 발송이 자동 차단됩니다.")
 }
 
 func TestFriendsPresenter_BuildMarkdown_EmptyFriends(t *testing.T) {

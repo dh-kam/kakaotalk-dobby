@@ -16,20 +16,26 @@ type friendsService struct {
 	apiBaseURL    string
 	httpClient    *http.Client
 	tokenProvider func(ctx context.Context) (string, error)
+	guard         FriendGuard
 }
 
 // NewFriendsService creates a new FriendsService instance.
-func NewFriendsService(apiBaseURL string, httpClient *http.Client, tokenProvider func(ctx context.Context) (string, error)) FriendsService {
+func NewFriendsService(apiBaseURL string, httpClient *http.Client, tokenProvider func(ctx context.Context) (string, error), guard ...FriendGuard) FriendsService {
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
 	}
+	var g FriendGuard
+	if len(guard) > 0 {
+		g = guard[0]
+	}
 	return &friendsService{
 		apiBaseURL:    apiBaseURL,
 		httpClient:    httpClient,
 		tokenProvider: tokenProvider,
+		guard:         g,
 	}
 }
 
@@ -117,6 +123,23 @@ func (s *friendsService) SendScrap(ctx context.Context, receiverUUIDs []string, 
 		return nil, fmt.Errorf("receiver UUID list cannot be empty")
 	}
 
+	if s.guard != nil {
+		summary := fmt.Sprintf("Scrap URL: %s", requestURL)
+		if templateID > 0 {
+			summary += fmt.Sprintf(" (Template ID: %d)", templateID)
+		}
+		allowed, err := s.guard.ValidateSend(ctx, receiverUUIDs, summary)
+		if err != nil {
+			return nil, err
+		}
+		receiverUUIDs = allowed
+	}
+	if len(receiverUUIDs) == 0 {
+		return &MessageResult{
+			SuccessfulReceiverUUIDs: []string{},
+		}, nil
+	}
+
 	uuidsJSON, err := json.Marshal(receiverUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("marshal receiver uuids: %w", err)
@@ -150,6 +173,20 @@ func (s *friendsService) SendCustom(ctx context.Context, receiverUUIDs []string,
 		return nil, fmt.Errorf("receiver UUID list cannot be empty")
 	}
 
+	if s.guard != nil {
+		summary := fmt.Sprintf("Custom template ID: %d", templateID)
+		allowed, err := s.guard.ValidateSend(ctx, receiverUUIDs, summary)
+		if err != nil {
+			return nil, err
+		}
+		receiverUUIDs = allowed
+	}
+	if len(receiverUUIDs) == 0 {
+		return &MessageResult{
+			SuccessfulReceiverUUIDs: []string{},
+		}, nil
+	}
+
 	uuidsJSON, err := json.Marshal(receiverUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("marshal receiver uuids: %w", err)
@@ -180,6 +217,20 @@ func (s *friendsService) sendDefault(ctx context.Context, receiverUUIDs []string
 		return nil, fmt.Errorf("receiver UUID list cannot be empty")
 	}
 
+	if s.guard != nil {
+		summary := summarizeTemplate(template)
+		allowed, err := s.guard.ValidateSend(ctx, receiverUUIDs, summary)
+		if err != nil {
+			return nil, err
+		}
+		receiverUUIDs = allowed
+	}
+	if len(receiverUUIDs) == 0 {
+		return &MessageResult{
+			SuccessfulReceiverUUIDs: []string{},
+		}, nil
+	}
+
 	uuidsJSON, err := json.Marshal(receiverUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("marshal receiver uuids: %w", err)
@@ -201,6 +252,68 @@ func (s *friendsService) sendDefault(ctx context.Context, receiverUUIDs []string
 
 	reqURL := fmt.Sprintf("%s/v1/api/talk/friends/message/default/send", s.apiBaseURL)
 	return s.postForm(ctx, reqURL, token, form)
+}
+
+func summarizeTemplate(template any) string {
+	if template == nil {
+		return ""
+	}
+	switch t := template.(type) {
+	case TextTemplate:
+		return t.Text
+	case *TextTemplate:
+		if t != nil {
+			return t.Text
+		}
+	case FeedTemplate:
+		return summarizeFeed(t)
+	case *FeedTemplate:
+		if t != nil {
+			return summarizeFeed(*t)
+		}
+	case ListTemplate:
+		return t.HeaderTitle
+	case *ListTemplate:
+		if t != nil {
+			return t.HeaderTitle
+		}
+	case CommerceTemplate:
+		return t.Content.Title
+	case *CommerceTemplate:
+		if t != nil {
+			return t.Content.Title
+		}
+	case LocationTemplate:
+		return t.Address
+	case *LocationTemplate:
+		if t != nil {
+			return t.Address
+		}
+	default:
+		b, err := json.Marshal(template)
+		if err == nil {
+			s := string(b)
+			if len(s) > 120 {
+				return s[:120] + "..."
+			}
+			return s
+		}
+	}
+	return fmt.Sprintf("%v", template)
+}
+
+func summarizeFeed(feed FeedTemplate) string {
+	var parts []string
+	if feed.Content.Title != "" {
+		parts = append(parts, feed.Content.Title)
+	}
+	if feed.Content.Description != "" {
+		parts = append(parts, feed.Content.Description)
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, " - ")
+	}
+	return "Feed message"
 }
 
 func (s *friendsService) postForm(ctx context.Context, reqURL, token string, form url.Values) (*MessageResult, error) {

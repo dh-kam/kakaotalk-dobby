@@ -94,6 +94,7 @@ func (p *FriendsPresenter) BuildMarkdown(data FriendsViewData) string {
 	sb.WriteString("| :-: | :--- | :--- | :-: | :--- |\n")
 
 	unregisteredCount := 0
+	unverifiedEmailCount := 0
 	lo.ForEach(data.Friends, func(f FriendItemView, _ int) {
 		msgStatus := "❌ No"
 		if f.Messageable {
@@ -116,7 +117,8 @@ func (p *FriendsPresenter) BuildMarkdown(data FriendsViewData) string {
 				email = "⚠️ 미등록"
 				unregisteredCount++
 			} else {
-				email = "-"
+				email = "⚠️ 미확인 (이메일 없음)"
+				unverifiedEmailCount++
 			}
 		} else {
 			email = fmt.Sprintf("`%s`", email)
@@ -133,6 +135,9 @@ func (p *FriendsPresenter) BuildMarkdown(data FriendsViewData) string {
 
 	if unregisteredCount > 0 {
 		sb.WriteString(fmt.Sprintf("\n> 🚨 **보안 주의**: 등록되지 않은 미승인 친구(%d명)가 감지되었습니다. 화이트리스트(`friends_map.json`)를 점검하세요.\n", unregisteredCount))
+	}
+	if unverifiedEmailCount > 0 {
+		sb.WriteString(fmt.Sprintf("\n> ⚠️ **신원 확인 필요**: 이메일이 등록되지 않은 친구(%d명)는 메시지 발송이 자동 차단됩니다. `friends_map.json`에 이메일을 등록해주세요.\n", unverifiedEmailCount))
 	}
 
 	return sb.String()

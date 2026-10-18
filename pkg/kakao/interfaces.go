@@ -52,6 +52,13 @@ type FriendsService interface {
 	SendCustom(ctx context.Context, receiverUUIDs []string, templateID int64, args map[string]string) (*MessageResult, error)
 }
 
+// FriendGuard validates and intercepts friend messages at the lowest layer before dispatching to Kakao APIs.
+type FriendGuard interface {
+	// ValidateSend checks receiver UUIDs and intercepts unverified recipients.
+	// It returns the filtered allowed receiver UUIDs, or an error if sending should be blocked entirely.
+	ValidateSend(ctx context.Context, receiverUUIDs []string, messageSummary string) (allowedUUIDs []string, err error)
+}
+
 // StorageService manages image uploads and scraping for KakaoTalk messages.
 type StorageService interface {
 	UploadImage(ctx context.Context, reader io.Reader, filename string) (*UploadedImageInfo, error)
