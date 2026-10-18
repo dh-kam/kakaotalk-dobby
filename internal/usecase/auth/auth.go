@@ -57,7 +57,7 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 
 	var code string
 	if req.Code != "" {
-		code = req.Code
+		code = CleanAuthorizationCode(req.Code)
 	} else if req.Manual {
 		authURL := authSvc.GetAuthURL(req.Scopes)
 		fmt.Fprintln(out, "Please visit the following URL in your browser to authorize:")
@@ -69,7 +69,7 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 		if err != nil {
 			return fmt.Errorf("read code input: %w", err)
 		}
-		code = strings.TrimSpace(input)
+		code = CleanAuthorizationCode(input)
 		if code == "" {
 			return fmt.Errorf("authorization code cannot be empty")
 		}
@@ -79,6 +79,7 @@ func (uc *LoginUseCase) Execute(ctx context.Context, req LoginRequest) error {
 		if err != nil {
 			return fmt.Errorf("local callback: %w", err)
 		}
+		code = CleanAuthorizationCode(code)
 	}
 
 	fmt.Fprintln(out, "Exchanging authorization code for token...")
@@ -319,3 +320,37 @@ func (uc *RefreshUseCase) Execute(ctx context.Context, req RefreshRequest) error
 	fmt.Fprintln(out, "Access token refreshed successfully.")
 	return nil
 }
+
+// CleanAuthorizationCode extracts the raw authorization code if a full redirect URL or query string is provided.
+func CleanAuthorizationCode(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	// If the string contains "code=", parse it to extract the code value.
+	if strings.Contains(trimmed, "code=") {
+		parseTarget := trimmed
+		if !strings.Contains(trimmed, "://") {
+			parseTarget = "http://" + trimmed
+		}
+		if u, err := url.Parse(parseTarget); err == nil {
+			if code := u.Query().Get("code"); code != "" {
+				return strings.TrimSpace(code)
+			}
+		}
+
+		// Fallback manual query extraction
+		idx := strings.Index(trimmed, "code=")
+		sub := trimmed[idx+len("code="):]
+		if end := strings.IndexAny(sub, "& \t\r\n#"); end != -1 {
+			sub = sub[:end]
+		}
+		if sub != "" {
+			return strings.TrimSpace(sub)
+		}
+	}
+
+	return trimmed
+}
+

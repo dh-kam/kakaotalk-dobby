@@ -15,6 +15,7 @@ const (
 	ScopeTalkMessage = "talk_message"
 	ScopeFriends     = "friends"
 	ScopeProfile     = "profile_nickname"
+	ScopeEmail       = "account_email"
 )
 
 type defaultClient struct {
