@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/samber/lo"
+	"golang.org/x/term"
 )
 
 // ServiceAccountInfo encapsulates active service account identity details.
@@ -49,32 +50,30 @@ func (p *FriendsPresenter) BuildMarkdown(data FriendsViewData) string {
 
 	sb.WriteString("# 🤖 KakaoTalk Service Account & Friends\n\n")
 
-	// Service Account section
+	// Service Account section (compact bullet list to avoid wide 2-column table wrapping)
 	if data.ServiceAccount != nil && (data.ServiceAccount.ID != 0 || data.ServiceAccount.Scope != "") {
 		sb.WriteString("### 👤 Active Service Account\n\n")
-		sb.WriteString("| Property | Value |\n")
-		sb.WriteString("| :--- | :--- |\n")
 		if data.ServiceAccount.ID != 0 {
-			sb.WriteString(fmt.Sprintf("| **User ID** | `%d` |\n", data.ServiceAccount.ID))
+			sb.WriteString(fmt.Sprintf("- **User ID**: `%d`\n", data.ServiceAccount.ID))
 		}
 		if data.ServiceAccount.Nickname != "" {
-			sb.WriteString(fmt.Sprintf("| **Nickname** | %s |\n", data.ServiceAccount.Nickname))
+			sb.WriteString(fmt.Sprintf("- **Nickname**: %s\n", data.ServiceAccount.Nickname))
 		}
 		if data.ServiceAccount.Email != "" {
-			sb.WriteString(fmt.Sprintf("| **Email** | %s |\n", data.ServiceAccount.Email))
+			sb.WriteString(fmt.Sprintf("- **Email**: `%s`\n", data.ServiceAccount.Email))
 		}
 		if data.ServiceAccount.ConnectedAt != "" {
 			formattedTime := data.ServiceAccount.ConnectedAt
 			if t, err := time.Parse(time.RFC3339, data.ServiceAccount.ConnectedAt); err == nil {
 				formattedTime = t.Local().Format("2006-01-02 15:04:05 MST")
 			}
-			sb.WriteString(fmt.Sprintf("| **Connected At** | %s |\n", formattedTime))
+			sb.WriteString(fmt.Sprintf("- **Connected At**: %s\n", formattedTime))
 		}
 		if data.ServiceAccount.Scope != "" {
 			scopes := lo.Map(strings.Fields(data.ServiceAccount.Scope), func(s string, _ int) string {
 				return fmt.Sprintf("`%s`", s)
 			})
-			sb.WriteString(fmt.Sprintf("| **Token Scopes** | %s |\n", strings.Join(scopes, ", ")))
+			sb.WriteString(fmt.Sprintf("- **Token Scopes**: %s\n", strings.Join(scopes, ", ")))
 		}
 		sb.WriteString("\n---\n\n")
 	}
@@ -87,28 +86,44 @@ func (p *FriendsPresenter) BuildMarkdown(data FriendsViewData) string {
 	}
 
 	sb.WriteString(fmt.Sprintf("### 👥 Authorized Friends (%d / Total %d)\n\n", len(data.Friends), data.TotalCount))
-	sb.WriteString("| # | Nickname | Messageable | UUID | Favorite |\n")
-	sb.WriteString("| :-: | :--- | :-: | :--- | :-: |\n")
+	sb.WriteString("| # | Nickname | Status | Receiver UUID |\n")
+	sb.WriteString("| :-: | :--- | :-: | :--- |\n")
 
 	lo.ForEach(data.Friends, func(f FriendItemView, _ int) {
 		msgStatus := "❌ No"
 		if f.Messageable {
 			msgStatus = "✅ Yes"
 		}
-		favStatus := "-"
+		nickname := f.Nickname
 		if f.Favorite {
-			favStatus = "⭐"
+			nickname = fmt.Sprintf("%s ⭐", f.Nickname)
 		}
-		sb.WriteString(fmt.Sprintf("| %d | **%s** | %s | `%s` | %s |\n",
+		sb.WriteString(fmt.Sprintf("| %d | **%s** | %s | `%s` |\n",
 			f.Index,
-			f.Nickname,
+			nickname,
 			msgStatus,
 			f.UUID,
-			favStatus,
 		))
 	})
 
 	return sb.String()
+}
+
+// getTerminalWidth dynamically detects terminal column width from out, falling back to 100.
+func getTerminalWidth(out io.Writer) int {
+	type fileDescriptor interface {
+		Fd() uintptr
+	}
+
+	if f, ok := out.(fileDescriptor); ok {
+		if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
+			// Clamp to safe word wrap width:
+			// Subtract 4 columns to avoid edge overflows on narrow or split panes,
+			// and bound between 70 and 110 for readable table proportions.
+			return lo.Clamp(w-4, 70, 110)
+		}
+	}
+	return 100
 }
 
 // Render writes glamour-styled ANSI output (or raw markdown if requested) to out.
@@ -119,9 +134,10 @@ func (p *FriendsPresenter) Render(out io.Writer, data FriendsViewData, rawMarkdo
 		return err
 	}
 
+	width := getTerminalWidth(out)
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(120),
+		glamour.WithWordWrap(width),
 	)
 	if err != nil {
 		_, fallbackErr := fmt.Fprint(out, md)

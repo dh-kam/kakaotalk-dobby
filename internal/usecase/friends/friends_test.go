@@ -49,16 +49,16 @@ func TestFriendsPresenter_BuildMarkdown_WithServiceAccountAndFriends(t *testing.
 
 	assert.Contains(t, md, "# 🤖 KakaoTalk Service Account & Friends")
 	assert.Contains(t, md, "### 👤 Active Service Account")
-	assert.Contains(t, md, "5064288351")
-	assert.Contains(t, md, "Donghee Kam")
-	assert.Contains(t, md, "donghee.kam@gmail.com")
+	assert.Contains(t, md, "- **User ID**: `5064288351`")
+	assert.Contains(t, md, "- **Nickname**: Donghee Kam")
+	assert.Contains(t, md, "- **Email**: `donghee.kam@gmail.com`")
 	assert.Contains(t, md, "`talk_message`, `friends`, `profile_nickname`")
 	assert.Contains(t, md, "### 👥 Authorized Friends (3 / Total 3)")
+	assert.Contains(t, md, "| # | Nickname | Status | Receiver UUID |")
 	assert.Contains(t, md, "**감동희**")
-	assert.Contains(t, md, "**감윤재**")
+	assert.Contains(t, md, "**감윤재 ⭐**")
 	assert.Contains(t, md, "✅ Yes")
 	assert.Contains(t, md, "❌ No")
-	assert.Contains(t, md, "⭐")
 	assert.Contains(t, md, "UUID-1111")
 }
 
@@ -121,4 +121,10 @@ func TestFriendsPresenter_Render_Glamour(t *testing.T) {
 	// Glamour renders styled output
 	assert.NotEmpty(t, out)
 	assert.Contains(t, out, "Friend1")
+}
+
+func TestGetTerminalWidth_Fallback(t *testing.T) {
+	var buf bytes.Buffer
+	width := getTerminalWidth(&buf)
+	assert.Equal(t, 100, width)
 }
